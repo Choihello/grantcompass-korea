@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from grantcompass.domain.enums import SourceName
 from grantcompass.domain.json_types import thaw_json_object
 from grantcompass.domain.programs import (
     IngestResult,
@@ -14,7 +15,13 @@ from grantcompass.domain.programs import (
     RawNotice,
     canonical_key_for,
 )
-from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow, ProgramRow
+from grantcompass.domain.source_runs import SourceRunFailure, SourceRunId, SourceRunSuccess
+from grantcompass.storage.table_programs import (
+    AttachmentRow,
+    NoticeVersionRow,
+    ProgramRow,
+    SourceRunRow,
+)
 
 
 class ProgramRepository:
@@ -23,6 +30,55 @@ class ProgramRepository:
     def __init__(self, session: AsyncSession) -> None:
         """Bind repository operations to one caller-owned async session."""
         self._session: AsyncSession = session
+
+    async def start_source_run(self, source: SourceName, started_at: datetime) -> SourceRunId:
+        """Create and commit a visible running source record."""
+        async with self._session.begin():
+            run = SourceRunRow(
+                source=source.value,
+                started_at=started_at,
+                finished_at=None,
+                status="running",
+                item_count=0,
+                response_hash=None,
+                error_code=None,
+                error_message=None,
+            )
+            self._session.add(run)
+            await self._session.flush()
+            return SourceRunId(run.id)
+
+    async def complete_source_run(
+        self,
+        run_id: SourceRunId,
+        outcome: SourceRunSuccess,
+    ) -> None:
+        """Commit a successful source-run transition."""
+        async with self._session.begin():
+            run = (
+                await self._session.scalars(select(SourceRunRow).where(SourceRunRow.id == run_id))
+            ).one()
+            run.status = "succeeded"
+            run.finished_at = outcome.finished_at
+            run.item_count = outcome.item_count
+            run.response_hash = outcome.response_hash
+
+    async def fail_source_run(
+        self,
+        run_id: SourceRunId,
+        outcome: SourceRunFailure,
+    ) -> None:
+        """Commit a failed source-run transition while preserving stored notices."""
+        async with self._session.begin():
+            run = (
+                await self._session.scalars(select(SourceRunRow).where(SourceRunRow.id == run_id))
+            ).one()
+            run.status = "failed"
+            run.finished_at = outcome.finished_at
+            run.item_count = outcome.item_count
+            run.response_hash = outcome.response_hash
+            run.error_code = outcome.error_code
+            run.error_message = outcome.error_message
 
     async def upsert_notice(self, raw: RawNotice, collected_at: datetime) -> IngestResult:
         """Atomically persist one idempotent source notice snapshot."""
