@@ -11,11 +11,10 @@ GrantCompass Korea addresses a problem also explored by `djfksjd/ir-search`: dis
 
 GrantCompass Korea is an independent implementation. Contributors must not copy or adapt code, prompts, schemas, data models, file structure, fixtures, tests, or non-public data from `djfksjd/ir-search` or another implementation. Public behavior may inform a requirement only when it is independently confirmed against an official specification or an official public service.
 
-The initial source contracts are derived directly from these official endpoints and their official documentation:
+The initial source contracts are derived directly from official documentation and are recorded separately with their confirmation dates and planned operations:
 
-- K-Startup announcement API service: `https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01`
-- Public Data Portal: `https://www.data.go.kr/`
-- 기업마당 JSON service: `https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do`
+- [K-Startup source contract](../sources/kstartup.md)
+- [기업마당 source contract](../sources/bizinfo.md)
 
 The specification URL and review date must accompany every source-contract change. Tests use independently authored synthetic fixtures and machine-consumed contract fields.
 
