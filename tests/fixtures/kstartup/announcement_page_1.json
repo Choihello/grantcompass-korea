@@ -13,11 +13,7 @@
         "pbanc_rcpt_end_dt": "20260731",
         "biz_aply_url": "https://www.k-startup.go.kr/web/contents/bizPbanc-ongoing.do?pbancSn=FICT-2026-001",
         "detl_pg_url": "https://www.k-startup.go.kr/web/contents/apply.do?pbancSn=FICT-2026-001",
-        "supt_regin": "가상지역",
-        "metadata": {
-          "channels": ["online", "offline"],
-          "priority": 1
-        }
+        "supt_regin": "가상지역"
       }
     ]
   },

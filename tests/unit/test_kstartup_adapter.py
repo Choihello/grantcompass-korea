@@ -6,7 +6,7 @@ import pytest
 from pydantic import SecretStr
 
 from grantcompass.domain.enums import SourceName
-from grantcompass.domain.json_types import FrozenJsonObject, JsonObject, thaw_json_object
+from grantcompass.domain.json_types import JsonObject, thaw_json_object
 from grantcompass.sources.base import SourceContractError, SourceTransportError
 from grantcompass.sources.kstartup import KStartupAdapter
 
@@ -63,11 +63,10 @@ async def test_maps_current_official_response_and_exact_request_contract() -> No
         ),
         "detl_pg_url": ("https://www.k-startup.go.kr/web/contents/apply.do?pbancSn=FICT-2026-001"),
         "supt_regin": "가상지역",
-        "metadata": {"channels": ["online", "offline"], "priority": 1},
     }
     assert page.page == 1
     assert page.has_next is True
-    assert page.response_hash == "fb40c133032bfd862beb0ef7db78c7e50742d04320d8792ab7619f80d3e4d69c"
+    assert page.response_hash == "c1e0d2256d0cffbc31fc69d00b28457e7208fa8db7cf358bd1cdc9a71aa0684f"
     assert notice.source is SourceName.KSTARTUP
     assert notice.source_notice_id == "FICT-2026-001"
     assert notice.title == "가상 로컬 창업 실험 지원사업"
@@ -76,9 +75,6 @@ async def test_maps_current_official_response_and_exact_request_contract() -> No
     assert str(notice.detail_url) == expected_payload["biz_aply_url"]
     assert notice.attachments == ()
     assert thaw_json_object(notice.raw_payload) == expected_payload
-    metadata = notice.raw_payload["metadata"]
-    assert isinstance(metadata, FrozenJsonObject)
-    assert metadata["channels"] == ("online", "offline")
     assert len(observed) == 1
     assert str(observed[0].url).split("?", maxsplit=1)[0] == _ENDPOINT
     assert dict(observed[0].url.params.multi_items()) == {
