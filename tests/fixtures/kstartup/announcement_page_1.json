@@ -17,7 +17,11 @@
           "atch_file_url": "https://www.k-startup.go.kr/file/202607150001.pdf",
           "file_nm": "2026년 초기창업패키지 공고문.pdf",
           "supt_regin": "전국",
-          "rcrt_prgs_yn": "Y"
+          "rcrt_prgs_yn": "Y",
+          "metadata": {
+            "channels": ["online", "offline"],
+            "priority": 1
+          }
         }
       ],
       "numOfRows": 1,

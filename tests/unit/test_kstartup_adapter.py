@@ -6,6 +6,7 @@ import pytest
 from pydantic import SecretStr
 
 from grantcompass.domain.enums import SourceName
+from grantcompass.domain.json_types import FrozenJsonObject, JsonObject, thaw_json_object
 from grantcompass.sources.base import SourceContractError, SourceTransportError
 from grantcompass.sources.kstartup import KStartupAdapter
 
@@ -45,7 +46,7 @@ async def test_maps_official_response_and_sends_only_contract_parameters() -> No
     notice = page.items[0]
     assert page.page == 1
     assert page.has_next is True
-    assert len(page.response_hash) == 64
+    assert page.response_hash == "4ae89df7630082f4b1104f4fc6750380bba0d4b147c10ed66ad67fa2d743cd9b"
     assert notice.source is SourceName.KSTARTUP
     assert notice.source_notice_id == "202607150001"
     assert notice.title == "2026년 초기창업패키지 창업기업 모집공고"
@@ -56,7 +57,27 @@ async def test_maps_official_response_and_sends_only_contract_parameters() -> No
     assert notice.application_end.isoformat() == "2026-07-31"
     assert notice.detail_url.scheme == "https"
     assert len(notice.attachments) == 1
-    assert notice.raw_payload["supt_regin"] == "전국"
+    expected_payload: JsonObject = {
+        "pbanc_sn": "202607150001",
+        "biz_pbanc_nm": "2026년 초기창업패키지 창업기업 모집공고",
+        "pbanc_ntrp_nm": "창업진흥원",
+        "pbanc_rcpt_bgng_dt": "20260701",
+        "pbanc_rcpt_end_dt": "20260731",
+        "detl_pg_url": (
+            "https://www.k-startup.go.kr/web/contents/bizPbanc-ongoing.do?pbancSn=202607150001"
+        ),
+        "aply_trgt_ctnt": "창업 3년 이내 기업",
+        "atch_file_url": "https://www.k-startup.go.kr/file/202607150001.pdf",
+        "file_nm": "2026년 초기창업패키지 공고문.pdf",
+        "supt_regin": "전국",
+        "rcrt_prgs_yn": "Y",
+        "metadata": {"channels": ["online", "offline"], "priority": 1},
+    }
+    assert thaw_json_object(notice.raw_payload) == expected_payload
+    metadata = notice.raw_payload["metadata"]
+    assert isinstance(metadata, FrozenJsonObject)
+    assert metadata["channels"] == ("online", "offline")
+    assert '"metadata"' in notice.model_dump_json()
     assert len(observed) == 1
     assert str(observed[0].url).split("?", maxsplit=1)[0] == _ENDPOINT
     assert dict(observed[0].url.params.multi_items()) == {
@@ -191,6 +212,51 @@ async def test_transport_failure_becomes_stable_transport_error() -> None:
     assert captured.value.code == "kstartup_transport_error"
     assert str(captured.value) == "K-Startup transport failed"
     assert "secret-that-must-not-leak" not in str(captured.value)
+
+
+@pytest.mark.anyio
+async def test_timeout_becomes_stable_transport_error() -> None:
+    # Given: a caller-owned transport that times out while reading upstream.
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        detail = "unsafe timeout detail"
+        raise httpx2.ReadTimeout(detail, request=request)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        adapter = KStartupAdapter(client, SecretStr("secret-that-must-not-leak"))
+
+        # When: the request crosses the timed-out transport boundary.
+        with pytest.raises(SourceTransportError) as captured:
+            _ = await adapter.fetch_page(1, 100)
+
+    # Then: timeout details and the service key are replaced by the stable source error.
+    assert captured.value.code == "kstartup_transport_error"
+    assert str(captured.value) == "K-Startup transport failed"
+    assert "secret-that-must-not-leak" not in str(captured.value)
+
+
+@pytest.mark.anyio
+async def test_insecure_base_url_is_rejected_before_transport() -> None:
+    # Given: an HTTP base URL and a transport that records any accidental request.
+    calls: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(request)
+        return httpx2.Response(200, content=b"{}")
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        # When: the public adapter boundary receives the insecure base URL.
+        with pytest.raises(SourceContractError) as captured:
+            _ = KStartupAdapter(
+                client,
+                SecretStr("secret-that-must-not-leak"),
+                base_url="http://example.invalid/service",
+            )
+
+    # Then: validation fails before transport and does not reveal the key.
+    assert captured.value.code == "kstartup_invalid_base_url"
+    assert calls == []
+    assert "secret-that-must-not-leak" not in str(captured.value)
+    assert "secret-that-must-not-leak" not in repr(captured.value)
 
 
 @pytest.mark.anyio

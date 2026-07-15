@@ -5,7 +5,16 @@ from hashlib import sha256
 from typing import ClassVar, Final, assert_never, final
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, RootModel, SecretStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    RootModel,
+    SecretStr,
+    TypeAdapter,
+    ValidationError,
+)
 
 from grantcompass.domain.enums import SourceName
 from grantcompass.domain.json_types import JsonObject, JsonValue, freeze_json_object
@@ -91,9 +100,21 @@ class KStartupAdapter:
         base_url: str = _DEFAULT_BASE_URL,
     ) -> None:
         """Bind a caller-owned HTTP client and protected service key."""
+        try:
+            validated_base = TypeAdapter(HttpUrl).validate_python(base_url)
+        except ValidationError:
+            raise SourceContractError(
+                code="kstartup_invalid_base_url",
+                message="K-Startup base URL must be a valid HTTPS URL",
+            ) from None
+        if validated_base.scheme != "https":
+            raise SourceContractError(
+                code="kstartup_invalid_base_url",
+                message="K-Startup base URL must be a valid HTTPS URL",
+            )
         self._client = client
         self._service_key = service_key
-        self._endpoint = f"{base_url.rstrip('/')}/{_OPERATION}"
+        self._endpoint = f"{str(validated_base).rstrip('/')}/{_OPERATION}"
 
     async def fetch_page(self, page: int, page_size: int) -> SourcePage:
         """Fetch one page of official announcements."""
