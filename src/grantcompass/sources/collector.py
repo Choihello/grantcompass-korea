@@ -17,6 +17,11 @@ from grantcompass.storage.repositories import ProgramRepository
 
 _UNEXPECTED_PAGE_CODE: Final = "unexpected_page"
 _SOURCE_MISMATCH_CODE: Final = "source_mismatch"
+_INVALID_PAGE_SIZE_CODE: Final = "invalid_page_size"
+_PAGE_LIMIT_CODE: Final = "page_limit_exceeded"
+_INTERNAL_ERROR_CODE: Final = "internal_collection_error"
+_MAX_SOURCE_PAGES: Final = 100
+_UNEXPECTED_COLLECTION_ERRORS: Final[tuple[type[Exception], ...]] = (Exception,)
 
 
 @final
@@ -41,6 +46,7 @@ class Collector:
         response_hashes: list[str] = []
         try:
             while True:
+                _validate_collection_request(page_number, page_size)
                 page = await adapter.fetch_page(page_number, page_size)
                 _validate_page(page, page_number, adapter.name)
                 response_hashes.append(page.response_hash)
@@ -74,6 +80,21 @@ class Collector:
                 error_code=error.code,
                 error_message=error.message,
             )
+        except _UNEXPECTED_COLLECTION_ERRORS as error:
+            response_hash = _combined_response_hash(response_hashes)
+            try:
+                await self._repository.fail_source_run(
+                    run_id,
+                    SourceRunFailure(
+                        finished_at=self._clock.now(),
+                        item_count=stored + unchanged,
+                        response_hash=response_hash,
+                        error_code=_INTERNAL_ERROR_CODE,
+                        error_message="unexpected collection failure",
+                    ),
+                )
+            finally:
+                raise error
 
         response_hash = _combined_response_hash(response_hashes)
         await self._repository.complete_source_run(
@@ -109,4 +130,17 @@ def _validate_page(page: SourcePage, expected_page: int, source: SourceName) -> 
         raise SourceContractError(
             code=_SOURCE_MISMATCH_CODE,
             message="notice source differs from adapter source",
+        )
+
+
+def _validate_collection_request(page_number: int, page_size: int) -> None:
+    if page_size <= 0:
+        raise SourceContractError(
+            code=_INVALID_PAGE_SIZE_CODE,
+            message="page size must be positive",
+        )
+    if page_number > _MAX_SOURCE_PAGES:
+        raise SourceContractError(
+            code=_PAGE_LIMIT_CODE,
+            message=f"source exceeded {_MAX_SOURCE_PAGES} pages",
         )

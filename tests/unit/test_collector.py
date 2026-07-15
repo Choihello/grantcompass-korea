@@ -1,14 +1,17 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import final
+from typing import final, override
 
+import anyio
+import anyio.lowlevel
 import pytest
 from pydantic import HttpUrl
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.enums import FreshnessStatus, SourceName
-from grantcompass.domain.programs import RawNotice
+from grantcompass.domain.programs import IngestResult, RawNotice
+from grantcompass.domain.source_runs import SourceRunFailure, SourceRunId
 from grantcompass.sources.base import SourcePage, SourceTransportError
 from grantcompass.sources.collector import Collector
 from grantcompass.storage.repositories import ProgramRepository
@@ -47,6 +50,59 @@ class _FailingAdapter:
         if page == 1:
             return self._first_page
         raise SourceTransportError(code="upstream_unavailable", message="source unavailable")
+
+
+@final
+class _PerpetualAdapter:
+    name = SourceName.KSTARTUP
+
+    def __init__(self) -> None:
+        self.calls: int = 0
+
+    async def fetch_page(self, page: int, page_size: int) -> SourcePage:
+        del page_size
+        await anyio.lowlevel.checkpoint()
+        self.calls += 1
+        return SourcePage(items=(), page=page, has_next=True, response_hash=f"page-{page}")
+
+
+@final
+class _NeverCalledAdapter:
+    name = SourceName.KSTARTUP
+
+    async def fetch_page(self, page: int, page_size: int) -> SourcePage:
+        del page, page_size
+        raise AssertionError
+
+
+@final
+class _UnexpectedStorageError(RuntimeError):
+    pass
+
+
+@final
+class _ExplodingRepository(ProgramRepository):
+    @override
+    async def upsert_notice(self, raw: RawNotice, collected_at: datetime) -> IngestResult:
+        del raw, collected_at
+        raise _UnexpectedStorageError
+
+
+@final
+class _DoubleFaultRepository(ProgramRepository):
+    @override
+    async def upsert_notice(self, raw: RawNotice, collected_at: datetime) -> IngestResult:
+        del raw, collected_at
+        raise _UnexpectedStorageError
+
+    @override
+    async def fail_source_run(
+        self,
+        run_id: SourceRunId,
+        outcome: SourceRunFailure,
+    ) -> None:
+        del run_id, outcome
+        raise RuntimeError
 
 
 def _notice(raw_notice: RawNotice, source_notice_id: str) -> RawNotice:
@@ -175,3 +231,86 @@ async def test_failed_source_does_not_mutate_other_source_data(
     assert result.source is SourceName.KSTARTUP
     assert result.freshness is FreshnessStatus.STALE
     assert bizinfo_count == 1
+
+
+@pytest.mark.anyio
+async def test_non_positive_page_size_closes_run_as_contract_failure(
+    program_repository: ProgramRepository,
+    db_session: AsyncSession,
+    now: datetime,
+) -> None:
+    # Given: a collector request with an invalid page size.
+    adapter = _NeverCalledAdapter()
+
+    # When: collection validates the public request boundary.
+    result = await Collector(program_repository, _FixedClock(now)).collect(adapter, page_size=0)
+
+    # Then: no adapter call occurs and the source run closes with a stable stale failure.
+    run = (await db_session.scalars(select(SourceRunRow))).one()
+    assert result.freshness is FreshnessStatus.STALE
+    assert result.error_code == "invalid_page_size"
+    assert run.status == "failed"
+    assert run.error_code == "invalid_page_size"
+
+
+@pytest.mark.anyio
+async def test_perpetual_pagination_closes_run_at_finite_limit(
+    program_repository: ProgramRepository,
+    db_session: AsyncSession,
+    now: datetime,
+) -> None:
+    # Given: an adapter that always advertises another correctly numbered page.
+    adapter = _PerpetualAdapter()
+
+    # When: collection reaches its pagination safety ceiling.
+    with anyio.fail_after(2):
+        result = await Collector(program_repository, _FixedClock(now)).collect(adapter)
+
+    # Then: the run is stale and failed rather than looping without bound.
+    run = (await db_session.scalars(select(SourceRunRow))).one()
+    assert adapter.calls == 100
+    assert result.freshness is FreshnessStatus.STALE
+    assert result.error_code == "page_limit_exceeded"
+    assert run.status == "failed"
+    assert run.error_code == "page_limit_exceeded"
+
+
+@pytest.mark.anyio
+async def test_unexpected_repository_error_closes_run_and_propagates(
+    db_session: AsyncSession,
+    raw_notice: RawNotice,
+    now: datetime,
+) -> None:
+    # Given: a source page whose repository write raises an unexpected error.
+    repository = _ExplodingRepository(db_session)
+    adapter = _PagedAdapter(
+        (SourcePage(items=(raw_notice,), page=1, has_next=False, response_hash="page-1"),)
+    )
+
+    # When: collection crosses the unexpected storage failure boundary.
+    with pytest.raises(_UnexpectedStorageError):
+        _ = await Collector(repository, _FixedClock(now)).collect(adapter)
+
+    # Then: the original error propagates after the committed run is marked failed.
+    run = (await db_session.scalars(select(SourceRunRow))).one()
+    assert run.status == "failed"
+    assert run.error_code == "internal_collection_error"
+
+
+@pytest.mark.anyio
+async def test_failure_recording_error_does_not_mask_original_error(
+    db_session: AsyncSession,
+    raw_notice: RawNotice,
+    now: datetime,
+) -> None:
+    # Given: both notice storage and best-effort run failure recording will fail.
+    repository = _DoubleFaultRepository(db_session)
+    adapter = _PagedAdapter(
+        (SourcePage(items=(raw_notice,), page=1, has_next=False, response_hash="page-1"),)
+    )
+
+    # When: the collector handles the secondary failure at its error boundary.
+    with pytest.raises(_UnexpectedStorageError):
+        _ = await Collector(repository, _FixedClock(now)).collect(adapter)
+
+    # Then: the original repository exception remains the propagated outcome.
