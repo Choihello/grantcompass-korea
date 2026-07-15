@@ -1,0 +1,1 @@
+"""GrantCompass Alembic migration package."""

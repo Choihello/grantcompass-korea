@@ -77,7 +77,8 @@ reportPrivateUsage = "error"
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-config", "--strict-markers"]
+cache_dir = ".tools/pytest-cache"
+addopts = ["-ra", "--strict-config", "--strict-markers", "--basetemp=.tools/pytest-tmp"]
 filterwarnings = ["error"]
 
 [tool.ruff]
