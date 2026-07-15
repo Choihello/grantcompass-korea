@@ -1,0 +1,143 @@
+[project]
+name = "grantcompass-korea"
+version = "0.1.0"
+description = "Evidence-based matching for Korean public support programs"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+dependencies = [
+    "aiosqlite>=0.20,<1",
+    "alembic>=1.13,<2",
+    "anyio>=4.4,<5",
+    "fastapi>=0.115,<1",
+    "httpx2[brotli,http2,zstd]>=2,<3",
+    "jinja2>=3.1,<4",
+    "lxml>=5,<7",
+    "pdfplumber>=0.11,<1",
+    "pydantic>=2.8,<3",
+    "pydantic-settings>=2.4,<3",
+    "pymupdf>=1.24,<2",
+    "python-multipart>=0.0.9,<1",
+    "sqlalchemy>=2.0,<3",
+    "typer>=0.12,<1",
+    "uvicorn>=0.30,<1",
+    "weasyprint>=62,<70",
+]
+
+[project.optional-dependencies]
+ocr = ["pillow>=10,<12", "pytesseract>=0.3.13,<1"]
+
+[project.scripts]
+grantcompass = "grantcompass.cli.app:app"
+
+[build-system]
+requires = ["hatchling>=1.25,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+exclude = ["/.superpowers", "/.tools", "/.venv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/grantcompass"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/.env.example",
+    "/.python-version",
+    "/CONTRIBUTING.md",
+    "/LICENSE",
+    "/README.md",
+    "/SECURITY.md",
+    "/docs",
+    "/pyproject.toml",
+    "/src",
+    "/tests",
+    "/uv.lock",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.21,<2",
+    "pytest>=8,<10",
+    "ruff>=0.6,<1",
+]
+
+[tool.basedpyright]
+typeCheckingMode = "all"
+pythonVersion = "3.12"
+pythonPlatform = "All"
+include = ["src", "tests"]
+exclude = ["**/__pycache__", "**/.venv", "**/build", "**/dist"]
+reportUnusedCallResult = "warning"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnusedVariable = "error"
+reportMissingParameterType = "error"
+reportPrivateUsage = "error"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "ISC001",
+    "D203",
+    "D213",
+    "CPY001",
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",
+    "ARG",
+    "PLR2004",
+    "SLF001",
+    "D",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+    "typer.Argument",
+    "typer.Option",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
