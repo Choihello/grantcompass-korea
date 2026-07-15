@@ -59,6 +59,15 @@ class Collector:
                 if not page.has_next:
                     break
                 page_number += 1
+            response_hash = _combined_response_hash(response_hashes)
+            await self._repository.complete_source_run(
+                run_id,
+                SourceRunSuccess(
+                    finished_at=self._clock.now(),
+                    item_count=stored + unchanged,
+                    response_hash=response_hash,
+                ),
+            )
         except (SourceContractError, SourceTransportError) as error:
             response_hash = _combined_response_hash(response_hashes)
             await self._repository.fail_source_run(
@@ -96,15 +105,6 @@ class Collector:
             finally:
                 raise error
 
-        response_hash = _combined_response_hash(response_hashes)
-        await self._repository.complete_source_run(
-            run_id,
-            SourceRunSuccess(
-                finished_at=self._clock.now(),
-                item_count=stored + unchanged,
-                response_hash=response_hash,
-            ),
-        )
         return CollectionResult(
             source=adapter.name,
             stored=stored,
