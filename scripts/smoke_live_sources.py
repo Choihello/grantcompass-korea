@@ -32,10 +32,10 @@ def main(
     if source != "kstartup":
         raise typer.BadParameter(_SOURCE_MESSAGE)
     key = os.environ.get(_KEY_ENV)
-    if key is None:
+    if key is None or not key.strip():
         typer.echo("SKIP kstartup: key missing")
         return
-    anyio.run(_smoke_kstartup, SecretStr(key))
+    anyio.run(_smoke_kstartup, SecretStr(key.strip()))
 
 
 if __name__ == "__main__":

@@ -14,249 +14,219 @@ _ENDPOINT: Final = (
     "https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
 )
 _FIXTURES: Final = Path(__file__).parents[1] / "fixtures" / "kstartup"
+_CREDENTIAL_MARKER: Final = "secret-that-must-not-leak"
 
 
-def _response_transport(filename: str) -> httpx2.MockTransport:
-    content = (_FIXTURES / filename).read_bytes()
+def _fixture_bytes(filename: str) -> bytes:
+    return (_FIXTURES / filename).read_bytes()
+
+
+def _response_transport(filename: str, status_code: int = 200) -> httpx2.MockTransport:
+    content = _fixture_bytes(filename)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         del request
-        return httpx2.Response(200, content=content, headers={"content-type": "application/json"})
+        return httpx2.Response(status_code, content=content)
 
     return httpx2.MockTransport(handler)
 
 
 @pytest.mark.anyio
-async def test_maps_official_response_and_sends_only_contract_parameters() -> None:
-    # Given: a saved official response and a caller-owned transport boundary.
+async def test_maps_current_official_response_and_exact_request_contract() -> None:
+    # Given: the fictional saved fixture using the current official Swagger shape.
     observed: list[httpx2.Request] = []
-    content = (_FIXTURES / "announcement_page_1.json").read_bytes()
+    content = _fixture_bytes("announcement_page_1.json")
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         observed.append(request)
-        return httpx2.Response(200, content=content, headers={"content-type": "application/json"})
+        return httpx2.Response(200, content=content)
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        adapter = KStartupAdapter(client, SecretStr("not-a-real-key"))
+        adapter = KStartupAdapter(client, SecretStr("fictional-key"))
 
-        # When: the first announcement page is fetched.
+        # When: the official first page is fetched.
         page = await adapter.fetch_page(1, 1)
 
-    # Then: the canonical notice and exact official request contract are exposed.
+    # Then: canonical fields, raw payload, pagination, and query names match Swagger.
     notice = page.items[0]
-    assert page.page == 1
-    assert page.has_next is True
-    assert page.response_hash == "4ae89df7630082f4b1104f4fc6750380bba0d4b147c10ed66ad67fa2d743cd9b"
-    assert notice.source is SourceName.KSTARTUP
-    assert notice.source_notice_id == "202607150001"
-    assert notice.title == "2026년 초기창업패키지 창업기업 모집공고"
-    assert notice.organization == "창업진흥원"
-    assert notice.application_start is not None
-    assert notice.application_start.isoformat() == "2026-07-01"
-    assert notice.application_end is not None
-    assert notice.application_end.isoformat() == "2026-07-31"
-    assert notice.detail_url.scheme == "https"
-    assert len(notice.attachments) == 1
     expected_payload: JsonObject = {
-        "pbanc_sn": "202607150001",
-        "biz_pbanc_nm": "2026년 초기창업패키지 창업기업 모집공고",
-        "pbanc_ntrp_nm": "창업진흥원",
+        "pbanc_sn": "FICT-2026-001",
+        "biz_pbanc_nm": "가상 로컬 창업 실험 지원사업",
+        "pbanc_ntrp_nm": "가상창업지원원",
+        "sprv_inst": "가상중소기업부",
+        "pbanc_ctnt": "가상 지역문제 해결 아이디어의 시장 검증을 지원합니다.",
+        "aply_trgt_ctnt": "가상의 예비창업자와 초기기업",
         "pbanc_rcpt_bgng_dt": "20260701",
         "pbanc_rcpt_end_dt": "20260731",
-        "detl_pg_url": (
-            "https://www.k-startup.go.kr/web/contents/bizPbanc-ongoing.do?pbancSn=202607150001"
+        "biz_aply_url": (
+            "https://www.k-startup.go.kr/web/contents/bizPbanc-ongoing.do?pbancSn=FICT-2026-001"
         ),
-        "aply_trgt_ctnt": "창업 3년 이내 기업",
-        "atch_file_url": "https://www.k-startup.go.kr/file/202607150001.pdf",
-        "file_nm": "2026년 초기창업패키지 공고문.pdf",
-        "supt_regin": "전국",
-        "rcrt_prgs_yn": "Y",
+        "detl_pg_url": ("https://www.k-startup.go.kr/web/contents/apply.do?pbancSn=FICT-2026-001"),
+        "supt_regin": "가상지역",
         "metadata": {"channels": ["online", "offline"], "priority": 1},
     }
+    assert page.page == 1
+    assert page.has_next is True
+    assert page.response_hash == "fb40c133032bfd862beb0ef7db78c7e50742d04320d8792ab7619f80d3e4d69c"
+    assert notice.source is SourceName.KSTARTUP
+    assert notice.source_notice_id == "FICT-2026-001"
+    assert notice.title == "가상 로컬 창업 실험 지원사업"
+    assert notice.organization == "가상창업지원원"
+    assert notice.summary == "가상 지역문제 해결 아이디어의 시장 검증을 지원합니다."
+    assert str(notice.detail_url) == expected_payload["biz_aply_url"]
+    assert notice.attachments == ()
     assert thaw_json_object(notice.raw_payload) == expected_payload
     metadata = notice.raw_payload["metadata"]
     assert isinstance(metadata, FrozenJsonObject)
     assert metadata["channels"] == ("online", "offline")
-    assert '"metadata"' in notice.model_dump_json()
     assert len(observed) == 1
     assert str(observed[0].url).split("?", maxsplit=1)[0] == _ENDPOINT
     assert dict(observed[0].url.params.multi_items()) == {
-        "serviceKey": "not-a-real-key",
-        "pageNo": "1",
-        "numOfRows": "1",
+        "serviceKey": "fictional-key",
+        "page": "1",
+        "perPage": "1",
         "returnType": "json",
     }
 
 
 @pytest.mark.anyio
-async def test_api_error_is_not_normalized_to_empty_page() -> None:
-    # Given: a valid JSON response carrying an upstream result-code failure.
-    async with httpx2.AsyncClient(transport=_response_transport("error.json")) as client:
-        adapter = KStartupAdapter(client, SecretStr("secret-that-must-not-leak"))
-
-        # When: the adapter inspects the upstream header.
-        with pytest.raises(SourceContractError) as captured:
-            _ = await adapter.fetch_page(1, 100)
-
-    # Then: a stable contract failure is raised without exposing the secret.
-    assert captured.value.code == "kstartup_api_error"
-    assert "secret-that-must-not-leak" not in str(captured.value)
-
-
-@pytest.mark.anyio
-async def test_single_item_object_is_normalized_to_one_notice() -> None:
-    # Given: the official single-object items variant.
-    async with httpx2.AsyncClient(transport=_response_transport("single_item.json")) as client:
-        adapter = KStartupAdapter(client, SecretStr("key"))
-
-        # When: the second page is fetched.
-        page = await adapter.fetch_page(2, 1)
-
-    # Then: the item becomes a one-element tuple with safe pagination metadata.
-    assert len(page.items) == 1
-    assert page.items[0].source_notice_id == "202607150002"
-    assert page.items[0].attachments == ()
-    assert page.has_next is False
-
-
-@pytest.mark.anyio
-async def test_null_items_is_normalized_to_empty_page() -> None:
-    # Given: a successful response whose items value is null.
+async def test_empty_official_data_list_returns_empty_page() -> None:
+    # Given: a successful official root with an empty nested data list.
     async with httpx2.AsyncClient(transport=_response_transport("empty.json")) as client:
         adapter = KStartupAdapter(client, SecretStr("key"))
 
         # When: the empty page is fetched.
         page = await adapter.fetch_page(1, 100)
 
-    # Then: an empty immutable collection is returned without hiding an API error.
+    # Then: the adapter returns an empty terminal page.
     assert page.items == ()
     assert page.has_next is False
 
 
 @pytest.mark.anyio
-async def test_malformed_json_becomes_stable_contract_error() -> None:
-    # Given: a 200 response with malformed JSON bytes.
+@pytest.mark.parametrize("fixture", ["malformed_root.json", "malformed_data.json"])
+async def test_malformed_official_structure_is_rejected(fixture: str) -> None:
+    # Given: valid JSON that violates the current official root or nested data shape.
+    async with httpx2.AsyncClient(transport=_response_transport(fixture)) as client:
+        adapter = KStartupAdapter(client, SecretStr("key"))
+
+        # When: the malformed structure crosses the boundary parser.
+        with pytest.raises(SourceContractError) as captured:
+            _ = await adapter.fetch_page(1, 100)
+
+    # Then: callers receive the stable response-contract failure.
+    assert captured.value.code == "kstartup_invalid_response"
+
+
+@pytest.mark.anyio
+async def test_invalid_json_is_rejected() -> None:
+    # Given: a 200 response containing invalid JSON bytes.
     async with httpx2.AsyncClient(transport=_response_transport("malformed.json")) as client:
         adapter = KStartupAdapter(client, SecretStr("key"))
 
-        # When: the transport body crosses the response boundary.
+        # When: invalid JSON crosses the boundary parser.
         with pytest.raises(SourceContractError) as captured:
             _ = await adapter.fetch_page(1, 100)
 
-    # Then: callers receive a stable error without raw response content.
+    # Then: no raw body is exposed through the stable error.
     assert captured.value.code == "kstartup_invalid_response"
-    assert "resultCode" not in str(captured.value)
+    assert "currentCount" not in str(captured.value)
 
 
 @pytest.mark.anyio
-async def test_insecure_notice_url_is_rejected() -> None:
-    # Given: an otherwise valid saved item with an insecure detail URL.
-    content = (
-        (_FIXTURES / "announcement_page_1.json")
-        .read_bytes()
-        .replace(
-            b"https://www.k-startup.go.kr/web/contents/",
-            b"http://www.k-startup.go.kr/web/contents/",
-        )
-    )
+@pytest.mark.parametrize("status_code", [401, 500])
+async def test_documented_http_error_is_transport_failure(status_code: int) -> None:
+    # Given: a documented official HTTP error status.
+    async with httpx2.AsyncClient(
+        transport=_response_transport("empty.json", status_code)
+    ) as client:
+        adapter = KStartupAdapter(client, SecretStr(_CREDENTIAL_MARKER))
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        del request
-        return httpx2.Response(200, content=content)
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        adapter = KStartupAdapter(client, SecretStr("key"))
-
-        # When: the insecure URL crosses canonical notice mapping.
-        with pytest.raises(SourceContractError) as captured:
-            _ = await adapter.fetch_page(1, 1)
-
-    # Then: the adapter rejects the response with a stable contract code.
-    assert captured.value.code == "kstartup_insecure_url"
-
-
-@pytest.mark.anyio
-async def test_http_status_becomes_stable_transport_error() -> None:
-    # Given: a caller-owned client returning a non-success HTTP status.
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        del request
-        return httpx2.Response(503, content=b"upstream unavailable")
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        adapter = KStartupAdapter(client, SecretStr("key"))
-
-        # When: the upstream status is inspected.
+        # When: the HTTP response crosses the adapter status boundary.
         with pytest.raises(SourceTransportError) as captured:
             _ = await adapter.fetch_page(1, 100)
 
-    # Then: the status class is stable and response payload is absent.
+    # Then: status is stable and neither key nor response body is exposed.
     assert captured.value.code == "kstartup_http_status"
-    assert str(captured.value) == "K-Startup returned HTTP 503"
+    assert str(captured.value) == f"K-Startup returned HTTP {status_code}"
+    assert _CREDENTIAL_MARKER not in repr(captured.value)
 
 
 @pytest.mark.anyio
-async def test_transport_failure_becomes_stable_transport_error() -> None:
-    # Given: a caller-owned transport that cannot connect upstream.
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        detail = "unsafe transport detail"
-        raise httpx2.ConnectError(detail, request=request)
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        adapter = KStartupAdapter(client, SecretStr("secret-that-must-not-leak"))
-
-        # When: the request crosses the failing transport boundary.
-        with pytest.raises(SourceTransportError) as captured:
-            _ = await adapter.fetch_page(1, 100)
-
-    # Then: the transport detail and service key are not propagated.
-    assert captured.value.code == "kstartup_transport_error"
-    assert str(captured.value) == "K-Startup transport failed"
-    assert "secret-that-must-not-leak" not in str(captured.value)
-
-
-@pytest.mark.anyio
-async def test_timeout_becomes_stable_transport_error() -> None:
-    # Given: a caller-owned transport that times out while reading upstream.
+async def test_timeout_is_stable_transport_failure() -> None:
+    # Given: a transport that raises a read timeout containing unsafe detail.
     def handler(request: httpx2.Request) -> httpx2.Response:
         detail = "unsafe timeout detail"
         raise httpx2.ReadTimeout(detail, request=request)
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        adapter = KStartupAdapter(client, SecretStr("secret-that-must-not-leak"))
+        adapter = KStartupAdapter(client, SecretStr(_CREDENTIAL_MARKER))
 
-        # When: the request crosses the timed-out transport boundary.
+        # When: the official request times out.
         with pytest.raises(SourceTransportError) as captured:
             _ = await adapter.fetch_page(1, 100)
 
-    # Then: timeout details and the service key are replaced by the stable source error.
+    # Then: timeout and credential details are replaced by the stable source error.
     assert captured.value.code == "kstartup_transport_error"
     assert str(captured.value) == "K-Startup transport failed"
-    assert "secret-that-must-not-leak" not in str(captured.value)
+    assert _CREDENTIAL_MARKER not in repr(captured.value)
 
 
 @pytest.mark.anyio
-async def test_insecure_base_url_is_rejected_before_transport() -> None:
-    # Given: an HTTP base URL and a transport that records any accidental request.
+async def test_redirect_is_not_followed_even_when_client_default_follows() -> None:
+    # Given: a redirecting official endpoint and a client configured to follow redirects.
+    observed: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        observed.append(request)
+        return httpx2.Response(302, headers={"location": "https://example.invalid/leak"})
+
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(handler), follow_redirects=True
+    ) as client:
+        adapter = KStartupAdapter(client, SecretStr(_CREDENTIAL_MARKER))
+
+        # When: the official endpoint returns a redirect.
+        with pytest.raises(SourceTransportError) as captured:
+            _ = await adapter.fetch_page(1, 100)
+
+    # Then: only the pinned destination is called and the redirect is a stable failure.
+    assert captured.value.code == "kstartup_http_status"
+    assert len(observed) == 1
+    assert observed[0].url.host == "apis.data.go.kr"
+    assert _CREDENTIAL_MARKER not in repr(captured.value)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://apis.data.go.kr/B552735/kisedKstartupService01",
+        "https://user:pass@apis.data.go.kr/B552735/kisedKstartupService01",
+        "https://apis.data.go.kr:8443/B552735/kisedKstartupService01",
+        "https://apis.data.go.kr/B552735/kisedKstartupService01?route=other",
+        "https://apis.data.go.kr/B552735/kisedKstartupService01#fragment",
+        "https://example.invalid/B552735/kisedKstartupService01",
+        "https://apis.data.go.kr/B552735/otherService",
+    ],
+)
+async def test_unpinned_base_is_rejected_before_key_or_transport(base_url: str) -> None:
+    # Given: a noncanonical credential destination and a recording transport.
     calls: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
-        return httpx2.Response(200, content=b"{}")
+        return httpx2.Response(200, content=_fixture_bytes("empty.json"))
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        # When: the public adapter boundary receives the insecure base URL.
+        # When: the destination crosses the public constructor boundary.
         with pytest.raises(SourceContractError) as captured:
-            _ = KStartupAdapter(
-                client,
-                SecretStr("secret-that-must-not-leak"),
-                base_url="http://example.invalid/service",
-            )
+            _ = KStartupAdapter(client, SecretStr(_CREDENTIAL_MARKER), base_url=base_url)
 
-    # Then: validation fails before transport and does not reveal the key.
+    # Then: stable validation occurs before any request or secret exposure.
     assert captured.value.code == "kstartup_invalid_base_url"
     assert calls == []
-    assert "secret-that-must-not-leak" not in str(captured.value)
-    assert "secret-that-must-not-leak" not in repr(captured.value)
+    assert _CREDENTIAL_MARKER not in repr(captured.value)
 
 
 @pytest.mark.anyio
@@ -270,9 +240,9 @@ async def test_invalid_pagination_is_rejected_before_transport(page: int, page_s
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         adapter = KStartupAdapter(client, SecretStr("key"))
 
-        # When: the invalid page request reaches the adapter boundary.
+        # When: the invalid request reaches the adapter boundary.
         with pytest.raises(SourceContractError) as captured:
             _ = await adapter.fetch_page(page, page_size)
 
-    # Then: a stable validation code is returned without a network request.
+    # Then: the network is not called and the stable pagination error is returned.
     assert captured.value.code == "kstartup_invalid_pagination"

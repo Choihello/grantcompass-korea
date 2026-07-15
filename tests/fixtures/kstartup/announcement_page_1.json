@@ -1,32 +1,28 @@
 {
-  "response": {
-    "header": {
-      "resultCode": "00",
-      "resultMsg": "NORMAL SERVICE."
-    },
-    "body": {
-      "items": [
-        {
-          "pbanc_sn": "202607150001",
-          "biz_pbanc_nm": "2026년 초기창업패키지 창업기업 모집공고",
-          "pbanc_ntrp_nm": "창업진흥원",
-          "pbanc_rcpt_bgng_dt": "20260701",
-          "pbanc_rcpt_end_dt": "20260731",
-          "detl_pg_url": "https://www.k-startup.go.kr/web/contents/bizPbanc-ongoing.do?pbancSn=202607150001",
-          "aply_trgt_ctnt": "창업 3년 이내 기업",
-          "atch_file_url": "https://www.k-startup.go.kr/file/202607150001.pdf",
-          "file_nm": "2026년 초기창업패키지 공고문.pdf",
-          "supt_regin": "전국",
-          "rcrt_prgs_yn": "Y",
-          "metadata": {
-            "channels": ["online", "offline"],
-            "priority": 1
-          }
+  "currentCount": 1,
+  "data": {
+    "data": [
+      {
+        "pbanc_sn": "FICT-2026-001",
+        "biz_pbanc_nm": "가상 로컬 창업 실험 지원사업",
+        "pbanc_ntrp_nm": "가상창업지원원",
+        "sprv_inst": "가상중소기업부",
+        "pbanc_ctnt": "가상 지역문제 해결 아이디어의 시장 검증을 지원합니다.",
+        "aply_trgt_ctnt": "가상의 예비창업자와 초기기업",
+        "pbanc_rcpt_bgng_dt": "20260701",
+        "pbanc_rcpt_end_dt": "20260731",
+        "biz_aply_url": "https://www.k-startup.go.kr/web/contents/bizPbanc-ongoing.do?pbancSn=FICT-2026-001",
+        "detl_pg_url": "https://www.k-startup.go.kr/web/contents/apply.do?pbancSn=FICT-2026-001",
+        "supt_regin": "가상지역",
+        "metadata": {
+          "channels": ["online", "offline"],
+          "priority": 1
         }
-      ],
-      "numOfRows": 1,
-      "pageNo": 1,
-      "totalCount": 2
-    }
-  }
+      }
+    ]
+  },
+  "matchCount": 3,
+  "page": 1,
+  "perPage": 1,
+  "totalCount": 3
 }
