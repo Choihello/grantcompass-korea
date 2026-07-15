@@ -1,0 +1,28 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": [
+        {
+          "pbanc_sn": "202607150001",
+          "biz_pbanc_nm": "2026년 초기창업패키지 창업기업 모집공고",
+          "pbanc_ntrp_nm": "창업진흥원",
+          "pbanc_rcpt_bgng_dt": "20260701",
+          "pbanc_rcpt_end_dt": "20260731",
+          "detl_pg_url": "https://www.k-startup.go.kr/web/contents/bizPbanc-ongoing.do?pbancSn=202607150001",
+          "aply_trgt_ctnt": "창업 3년 이내 기업",
+          "atch_file_url": "https://www.k-startup.go.kr/file/202607150001.pdf",
+          "file_nm": "2026년 초기창업패키지 공고문.pdf",
+          "supt_regin": "전국",
+          "rcrt_prgs_yn": "Y"
+        }
+      ],
+      "numOfRows": 1,
+      "pageNo": 1,
+      "totalCount": 2
+    }
+  }
+}
