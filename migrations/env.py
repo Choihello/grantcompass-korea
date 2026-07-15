@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from grantcompass.storage.db import enable_sqlite_foreign_keys
 from grantcompass.storage.tables import Base
 
 config = context.config
@@ -39,6 +40,7 @@ async def run_async_migrations() -> None:
     """Create and dispose the async engine around one migration run."""
     section = config.get_section(config.config_ini_section, {})
     engine = async_engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
+    enable_sqlite_foreign_keys(engine)
     async with engine.connect() as connection:
         await connection.run_sync(apply_migrations)
     await engine.dispose()

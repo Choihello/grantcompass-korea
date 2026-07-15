@@ -7,6 +7,7 @@ from pydantic import HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.enums import SourceName
+from grantcompass.domain.json_types import freeze_json_object
 from grantcompass.domain.programs import RawNotice
 from grantcompass.storage.db import create_engine, create_session_factory
 from grantcompass.storage.repositories import ProgramRepository
@@ -45,7 +46,7 @@ def raw_notice() -> RawNotice:
         application_start=date(2026, 7, 1),
         application_end=date(2026, 7, 31),
         detail_url=HttpUrl("https://example.invalid/notices/K-2026-001"),
-        raw_payload={"notice_id": "K-2026-001", "page": 1},
+        raw_payload=freeze_json_object({"notice_id": "K-2026-001", "page": 1}),
     )
 
 

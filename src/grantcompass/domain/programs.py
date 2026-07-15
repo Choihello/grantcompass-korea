@@ -6,10 +6,15 @@ from hashlib import sha256
 from typing import ClassVar, NewType
 from unicodedata import normalize
 
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl, field_serializer, field_validator
 
 from grantcompass.domain.enums import SourceName
-from grantcompass.domain.json_types import JsonObject
+from grantcompass.domain.json_types import (
+    FrozenJsonObject,
+    JsonObject,
+    freeze_json_object,
+    thaw_json_object,
+)
 
 ProgramId = NewType("ProgramId", int)
 NoticeVersionId = NewType("NoticeVersionId", int)
@@ -19,7 +24,11 @@ AttachmentId = NewType("AttachmentId", int)
 class AttachmentRef(BaseModel):
     """Validated attachment metadata supplied by a source adapter."""
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        frozen=True,
+    )
 
     filename: str
     download_url: HttpUrl
@@ -41,7 +50,21 @@ class RawNotice(BaseModel):
     application_end: date | None = None
     detail_url: HttpUrl
     attachments: tuple[AttachmentRef, ...] = ()
-    raw_payload: JsonObject
+    raw_payload: FrozenJsonObject
+
+    @field_validator("raw_payload", mode="before")
+    @classmethod
+    def freeze_raw_payload(
+        cls,
+        value: JsonObject | FrozenJsonObject,
+    ) -> FrozenJsonObject:
+        """Parse transport JSON into a deeply immutable value."""
+        return freeze_json_object(value)
+
+    @field_serializer("raw_payload")
+    def serialize_raw_payload(self, value: FrozenJsonObject) -> JsonObject:
+        """Serialize immutable JSON as standard JSON containers."""
+        return thaw_json_object(value)
 
     def content_hash(self) -> str:
         """Return the stable hash of published content, excluding transport metadata."""

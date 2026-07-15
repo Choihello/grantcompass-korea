@@ -5,7 +5,9 @@ import pytest
 from pydantic import HttpUrl, ValidationError
 
 from grantcompass.domain.documents import DocumentBlockId, DocumentId, Evidence
+from grantcompass.domain.eligibility import ApplicantProfile
 from grantcompass.domain.enums import SourceName
+from grantcompass.domain.json_types import JsonObject, freeze_json_object
 from grantcompass.domain.programs import Program, ProgramId, RawNotice
 
 
@@ -16,7 +18,7 @@ def test_raw_payload_is_excluded_from_content_hash() -> None:
         source_notice_id="PBLN-1",
         title="수출 지원",
         detail_url=HttpUrl("https://example.invalid/PBLN-1"),
-        raw_payload={"request_page": 1},
+        raw_payload=freeze_json_object({"request_page": 1}),
     )
     second = first.model_copy(update={"raw_payload": {"request_page": 2}})
 
@@ -35,7 +37,7 @@ def test_published_change_changes_content_hash() -> None:
         title="수출 지원",
         summary="원본",
         detail_url=HttpUrl("https://example.invalid/PBLN-1"),
-        raw_payload={},
+        raw_payload=freeze_json_object({}),
     )
     second = first.model_copy(update={"summary": "변경"})
 
@@ -53,7 +55,7 @@ def test_raw_notice_rejects_mutation() -> None:
         source_notice_id="manual-1",
         title="기관 사업",
         detail_url=HttpUrl("https://example.invalid/manual-1"),
-        raw_payload={},
+        raw_payload=freeze_json_object({}),
     )
 
     # When: a caller tries to mutate published content.
@@ -61,6 +63,35 @@ def test_raw_notice_rejects_mutation() -> None:
         notice.__setattr__("title", "변조")
 
     # Then: Pydantic rejects the mutation at the boundary.
+
+
+def test_boundary_json_is_deeply_immutable_and_serializable() -> None:
+    # Given: nested JSON supplied to both boundary models.
+    raw_payload: JsonObject = {"nested": {"page": 1}, "tags": ["startup"]}
+    notice = RawNotice(
+        source=SourceName.MANUAL,
+        source_notice_id="manual-json-1",
+        title="기관 사업",
+        detail_url=HttpUrl("https://example.invalid/manual-json-1"),
+        raw_payload=freeze_json_object(raw_payload),
+    )
+    profile = ApplicantProfile(
+        display_name="테스트 기업",
+        performance=freeze_json_object({"revenue": {"2025": 100}}),
+        benefit_history=(freeze_json_object({"programs": ["seed"]}),),
+    )
+
+    # When: the parsed JSON containers are hashed and serialized.
+    hashes = (
+        hash(notice.raw_payload),
+        hash(profile.performance),
+        hash(profile.benefit_history),
+    )
+    serialized = notice.model_dump_json()
+
+    # Then: every nested value is immutable while the boundary stays JSON-compatible.
+    assert all(isinstance(value, int) for value in hashes)
+    assert '"nested":{"page":1}' in serialized
 
 
 def test_program_is_frozen_internal_outcome() -> None:
