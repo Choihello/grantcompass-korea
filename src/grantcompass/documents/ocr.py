@@ -42,9 +42,9 @@ class ValidatedOcrBlock:
 
 @dataclass(frozen=True, slots=True)
 class OcrFailure:
-    """Stable provider failure safe to persist and display."""
+    """Provider failure candidate that must cross output validation."""
 
-    code: str
+    code: JsonValue
 
 
 type OcrProviderOutput = OcrFailure | tuple[OcrBlock | JsonValue, ...] | JsonValue
@@ -66,7 +66,10 @@ def validate_ocr_output(
     """Parse untrusted provider output into finite evidence or failure."""
     if isinstance(outcome, OcrFailure):
         code = outcome.code
-        safe = code if code.isascii() and code.replace("_", "").isalnum() else "provider"
+        if isinstance(code, str):
+            safe = code if code.isascii() and code.replace("_", "").isalnum() else "provider"
+        else:
+            safe = "invalid_output"
         return OcrFailure(safe)
     if not isinstance(outcome, tuple):
         return OcrFailure("invalid_output")

@@ -7,7 +7,12 @@ import pytest
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen.canvas import Canvas
 
-from grantcompass.documents.ocr import OcrBlock, OcrFailure, OcrPage
+from grantcompass.documents.ocr import (
+    OcrBlock,
+    OcrFailure,
+    OcrPage,
+    validate_ocr_output,
+)
 from grantcompass.documents.pdf import PdfParser
 from grantcompass.domain.json_types import JsonValue
 
@@ -45,6 +50,18 @@ def _partial_text_pdf() -> bytes:
 
 async def _cancellation_type() -> type[BaseException]:
     return anyio.get_cancelled_exc_class()
+
+
+@pytest.mark.parametrize("code", [None, 7])
+def test_ocr_maps_non_string_provider_failure_code_to_invalid_output(code: JsonValue) -> None:
+    # Given: a runtime provider returning malformed failure metadata.
+    failure = OcrFailure(code)
+
+    # When: the provider failure crosses the OCR trust boundary.
+    result = validate_ocr_output(failure, width=100, height=100)
+
+    # Then: malformed failure metadata becomes the finite invalid-output code.
+    assert result == OcrFailure("invalid_output")
 
 
 @pytest.mark.parametrize(
