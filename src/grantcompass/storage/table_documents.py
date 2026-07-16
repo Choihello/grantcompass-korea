@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Column, ForeignKey, Integer, String, Table, Text, UniqueConstraint
+from sqlalchemy import Column, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from grantcompass.storage.table_base import Base
@@ -12,6 +12,9 @@ class DocumentRow(Base):
     """Mutable parsed-document row managed by SQLAlchemy."""
 
     __tablename__: str = "documents"
+    __table_args__: tuple[UniqueConstraint] = (
+        UniqueConstraint("attachment_id", name="uq_documents_attachment"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     attachment_id: Mapped[int] = mapped_column(ForeignKey("attachments.id"), index=True)
@@ -38,6 +41,10 @@ class DocumentBlockRow(Base):
     page: Mapped[int | None] = mapped_column()
     section_path: Mapped[str | None] = mapped_column(Text)
     table_ref: Mapped[str | None] = mapped_column(String(200))
+    source_block_id: Mapped[str | None] = mapped_column(String(200))
+    bbox_json: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    provenance: Mapped[str | None] = mapped_column(String(40))
 
 
 class EvidenceRow(Base):

@@ -8,8 +8,11 @@ ParseErrorCode = Literal[
     "archive_too_large",
     "invalid_archive",
     "invalid_document_id",
+    "invalid_pdf",
     "invalid_xml",
+    "encrypted_pdf",
     "missing_content",
+    "pdf_page_limit",
     "unsafe_archive_path",
     "unsupported_document",
 ]

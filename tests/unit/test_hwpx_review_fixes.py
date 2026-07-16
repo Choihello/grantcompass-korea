@@ -141,10 +141,13 @@ def test_document_parse_error_and_block_kind_are_finite_immutable_contracts() ->
     # Then: codes and block kinds are finite machine-readable sets.
     assert set(get_args(ParseErrorCode)) == {
         "archive_too_large",
+        "encrypted_pdf",
         "invalid_archive",
         "invalid_document_id",
+        "invalid_pdf",
         "invalid_xml",
         "missing_content",
+        "pdf_page_limit",
         "unsafe_archive_path",
         "unsupported_document",
     }

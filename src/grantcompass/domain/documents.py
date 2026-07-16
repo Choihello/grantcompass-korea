@@ -19,6 +19,9 @@ class DocumentBlock:
     page: int | None
     section_path: str | None
     table_ref: str | None = None
+    bbox: tuple[float, float, float, float] | None = None
+    confidence: float | None = None
+    provenance: Literal["hwpx", "pdf_text", "pdf_table", "ocr"] | None = None
 
 
 @dataclass(frozen=True, slots=True)

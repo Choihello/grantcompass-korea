@@ -60,6 +60,8 @@ include = [
 dev = [
     "basedpyright>=1.21,<2",
     "pytest>=8,<10",
+    "pymupdf-stubs>=1.28,<2",
+    "reportlab>=4.2,<5",
     "ruff>=0.6,<1",
 ]
 

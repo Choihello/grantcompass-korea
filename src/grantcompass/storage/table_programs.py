@@ -60,6 +60,10 @@ class AttachmentRow(Base):
     content_hash: Mapped[str | None] = mapped_column(String(64))
     local_path: Mapped[str | None] = mapped_column(Text)
     parse_status: Mapped[str] = mapped_column(String(40), default="pending")
+    parse_error_code: Mapped[str | None] = mapped_column(String(100))
+    requires_review: Mapped[bool] = mapped_column(default=False, server_default=text("0"))
+    parser_name: Mapped[str | None] = mapped_column(String(100))
+    parser_version: Mapped[str | None] = mapped_column(String(100))
 
 
 class SourceRunRow(Base):
