@@ -88,6 +88,59 @@ def test_candidate_matches_independently_reviewed_adversarial_golden(
     assert tuple((rule.kind, rule.operator, rule.expected_value) for rule in rules) == expected
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "업력 3년 이상, 7년 이내",
+        "업력 3년 이상\N{FULLWIDTH COMMA}7년 이내",
+        "업력 3년 이상\N{IDEOGRAPHIC COMMA} 7년 이내",
+        "업력 3년 이상 ~ 7년 이내",
+        "업력 3년 이상~7년 이내",
+        "업력 3년 이상 \N{FULLWIDTH TILDE} 7년 이내",
+        "업력 3년 이상 - 7년 이내",
+        "업력 3년 이상-7년 이내",
+        "업력 3년 이상부터 7년 이내",
+        "업력 3년 이상 부터 7년 이내",
+    ],
+)
+def test_candidate_suppresses_partial_rule_for_separator_compound_age_bound(text: str) -> None:
+    # Given: one clause expresses two business-age bounds with a common separator.
+    document = _document(text)
+
+    # When: deterministic extraction runs.
+    rules = RegexRuleCandidateProvider().extract(document)
+
+    # Then: no partial automatic rule is emitted for the ambiguous compound range.
+    assert rules == ()
+
+
+def test_candidate_keeps_safe_single_business_age_bound() -> None:
+    # Given: one clause contains only a supported lower business-age bound.
+    document = _document("업력 3년 이상")
+
+    # When: deterministic extraction runs.
+    rules = RegexRuleCandidateProvider().extract(document)
+
+    # Then: the unambiguous single bound remains automatic.
+    assert tuple((rule.kind, rule.operator, rule.expected_value) for rule in rules) == (
+        (RuleKind.BUSINESS_AGE_MONTHS, "gte", 36),
+    )
+
+
+def test_candidate_keeps_business_age_bound_in_independent_clause() -> None:
+    # Given: a later sentence contains an independent supported business-age bound.
+    document = _document("업력 3년 이상. 7년 이내 대상은 별도 심사. 업력 5년 이상")
+
+    # When: deterministic extraction runs.
+    rules = RegexRuleCandidateProvider().extract(document)
+
+    # Then: suppression does not cross sentence or repeated-subject clause boundaries.
+    assert tuple((rule.kind, rule.operator, rule.expected_value) for rule in rules) == (
+        (RuleKind.BUSINESS_AGE_MONTHS, "gte", 36),
+        (RuleKind.BUSINESS_AGE_MONTHS, "gte", 60),
+    )
+
+
 def test_candidate_rejects_duplicate_document_block_identity() -> None:
     # Given: parser output containing two blocks with the same address.
     document = _document("업력 3년 이내")

@@ -65,7 +65,11 @@ _INDUSTRY_EXCLUSION: Final = re.compile(
 _FOLLOWING_NEGATION: Final = re.compile(
     rf"\s*(?:{_PUNCTUATION_CLASS}\s*)?(?:지원\s*)?(?:불가|제외)"
 )
-_FOLLOWING_AGE_BOUND: Final = re.compile(r"\s+\d{1,3}\s*(?:년|개월)\s*(?:이내|이하|미만|이상|초과)")
+_COMPOUND_AGE_PUNCTUATION: Final = ",\N{FULLWIDTH COMMA}\N{IDEOGRAPHIC COMMA}~\N{FULLWIDTH TILDE}-"
+_NUMERIC_AGE_BOUND: Final = r"\d{1,3}\s*(?:년|개월)\s*(?:이내|이하|미만|이상|초과)"
+_FOLLOWING_AGE_BOUND: Final = re.compile(
+    rf"(?:\s+|\s*(?:[{_COMPOUND_AGE_PUNCTUATION}]|부터)\s*){_NUMERIC_AGE_BOUND}"
+)
 _GENERIC_INDUSTRY_NOUNS: Final = frozenset({"기업", "창업"})
 _OPERATORS: Final = {
     "이내": "lte",
