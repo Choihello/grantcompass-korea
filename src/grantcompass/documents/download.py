@@ -28,6 +28,7 @@ MAX_FILENAME_LENGTH: Final = 255
 ATTACHMENT_MISSING: Final[DocumentIngestErrorCode] = "attachment_missing"
 ATTACHMENT_TOO_LARGE: Final[DocumentIngestErrorCode] = "attachment_too_large"
 DOWNLOAD_FAILED: Final[DocumentIngestErrorCode] = "download_failed"
+DOWNLOAD_TIMEOUT: Final[DocumentIngestErrorCode] = "download_timeout"
 INVALID_ATTACHMENT_TYPE: Final[DocumentIngestErrorCode] = "invalid_attachment_type"
 REDIRECT_LIMIT: Final[DocumentIngestErrorCode] = "redirect_limit"
 REDIRECT_LOOP: Final[DocumentIngestErrorCode] = "redirect_loop"
@@ -36,11 +37,14 @@ UNSAFE_DOWNLOAD_TARGET: Final[DocumentIngestErrorCode] = "unsafe_download_target
 
 @dataclass(frozen=True, slots=True)
 class DownloadLimits:
-    """Hard byte, redirect, and DNS budgets for one attachment fetch."""
+    """Hard byte, redirect, DNS, transport, and whole-fetch budgets."""
 
     max_bytes: int = MAX_ATTACHMENT_BYTES
     max_redirects: int = 3
     dns_timeout_seconds: float = 5.0
+    connect_timeout_seconds: float = 5.0
+    read_timeout_seconds: float = 30.0
+    fetch_timeout_seconds: float = 60.0
 
 
 DEFAULT_DOWNLOAD_LIMITS: Final = DownloadLimits()
@@ -93,6 +97,13 @@ class AttachmentDownloader:
 
     async def fetch(self, attachment: AttachmentRef) -> bytes:
         """Download exact bytes without forwarding caller credentials or headers."""
+        try:
+            with anyio.fail_after(self._limits.fetch_timeout_seconds):
+                return await self._fetch_with_redirects(attachment)
+        except TimeoutError:
+            raise DocumentIngestError(DOWNLOAD_TIMEOUT) from None
+
+    async def _fetch_with_redirects(self, attachment: AttachmentRef) -> bytes:
         filename = self._sanitize_filename(attachment.filename)
         expected_extension = PurePath(filename).suffix.casefold()
         if expected_extension not in {".pdf", ".hwpx"}:
@@ -125,10 +136,18 @@ class AttachmentDownloader:
                 self._validate_magic(content, expected_extension)
                 return content
             finally:
-                await response.aclose()
+                with anyio.CancelScope(shield=True):
+                    await response.aclose()
 
     async def _send(self, url: str) -> httpx2.Response:
         request = httpx2.Request("GET", url, headers=SAFE_REQUEST_HEADERS)
+        timeout = httpx2.Timeout(
+            connect=self._limits.connect_timeout_seconds,
+            read=self._limits.read_timeout_seconds,
+            write=self._limits.read_timeout_seconds,
+            pool=self._limits.connect_timeout_seconds,
+        )
+        request.extensions["timeout"] = timeout.as_dict()
         try:
             return await self._client.send(
                 request,
@@ -136,6 +155,8 @@ class AttachmentDownloader:
                 auth=None,
                 follow_redirects=False,
             )
+        except httpx2.TimeoutException:
+            raise DocumentIngestError(DOWNLOAD_TIMEOUT) from None
         except httpx2.TransportError:
             raise DocumentIngestError(DOWNLOAD_FAILED) from None
 

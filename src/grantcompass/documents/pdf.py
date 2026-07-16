@@ -1,7 +1,7 @@
 """Pure-bytes PDF text, table, and selective OCR parser."""
 
 from hashlib import sha256
-from math import ceil, isfinite
+from math import ceil
 from pathlib import PurePath
 from typing import Final, Protocol
 
@@ -9,7 +9,14 @@ import anyio
 import pymupdf as fitz
 
 from grantcompass.documents.base import DocumentBlock, ParsedDocument, ParseErrorCode, parse_failure
-from grantcompass.documents.ocr import OcrBlock, OcrFailure, OcrPage, OcrProvider
+from grantcompass.documents.ocr import (
+    OcrFailure,
+    OcrPage,
+    OcrProvider,
+    OcrProviderOutput,
+    ValidatedOcrBlock,
+    validate_ocr_output,
+)
 from grantcompass.documents.pdf_tables import extract_table_blocks
 from grantcompass.domain.documents import DocumentBlockId, DocumentId
 
@@ -112,13 +119,14 @@ class PdfParser:
             page = source.load_page(page_index)
             page_number = page_index + 1
             page_blocks = self._text_blocks(page, page_number)
-            blocks.extend(page_blocks)
             normalized_chars = sum(len("".join(block.text.split())) for block in page_blocks)
             if normalized_chars < self._min_text_chars:
                 ocr_blocks, warning = self._ocr_page(page, page_number)
-                blocks.extend(ocr_blocks)
+                blocks.extend(ocr_blocks if warning is None else page_blocks)
                 if warning is not None:
                     warnings.append(warning)
+            else:
+                blocks.extend(page_blocks)
         return blocks, warnings
 
     @staticmethod
@@ -157,22 +165,10 @@ class PdfParser:
             outcome = anyio.run(self._recognize_with_timeout, request)
         except TimeoutError:
             return (), f"ocr_failed:timeout:page{page_number}"
-        except Exception:  # noqa: BLE001
-            return (), f"ocr_failed:provider:page{page_number}"
-        match outcome:
-            case OcrFailure(code=code):
-                safe_code = (
-                    code if code.isascii() and code.replace("_", "").isalnum() else "provider"
-                )
-                return (), f"ocr_failed:{safe_code}:page{page_number}"
-            case tuple() as recognized:
-                valid = tuple(block for block in recognized if self._valid_ocr_block(block, pixmap))
-                warning = (
-                    f"ocr_failed:invalid_output:page{page_number}"
-                    if len(valid) != len(recognized)
-                    else None
-                )
-                return self._map_ocr_blocks(valid, page_number, scale), warning
+        validated = validate_ocr_output(outcome, pixmap.width, pixmap.height)
+        if isinstance(validated, OcrFailure):
+            return (), f"ocr_failed:{validated.code}:page{page_number}"
+        return self._map_ocr_blocks(validated, page_number, scale), None
 
     def _prepare_ocr_request(
         self,
@@ -205,26 +201,15 @@ class PdfParser:
     async def _recognize_with_timeout(
         self,
         request: OcrPage,
-    ) -> tuple[OcrBlock, ...] | OcrFailure:
+    ) -> OcrProviderOutput:
         if self._ocr_provider is None:
             return OcrFailure("provider")
         with anyio.fail_after(self._ocr_timeout_seconds):
             return await self._ocr_provider.recognize(request)
 
     @staticmethod
-    def _valid_ocr_block(block: OcrBlock, pixmap: fitz.Pixmap) -> bool:
-        x0, y0, x1, y1 = block.bbox
-        values = (*block.bbox, block.confidence)
-        return (
-            all(isfinite(value) for value in values)
-            and 0 <= x0 < x1 <= pixmap.width
-            and 0 <= y0 < y1 <= pixmap.height
-            and 0 <= block.confidence <= 1
-        )
-
-    @staticmethod
     def _map_ocr_blocks(
-        recognized: tuple[OcrBlock, ...],
+        recognized: tuple[ValidatedOcrBlock, ...],
         page_number: int,
         scale: float,
     ) -> tuple[DocumentBlock, ...]:

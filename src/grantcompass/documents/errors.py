@@ -6,6 +6,7 @@ DocumentIngestErrorCode = Literal[
     "attachment_missing",
     "attachment_too_large",
     "download_failed",
+    "download_timeout",
     "download_url_missing",
     "invalid_attachment_type",
     "redirect_limit",
