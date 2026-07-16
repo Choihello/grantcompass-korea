@@ -4,41 +4,69 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Literal, override
-from urllib.parse import quote
+from typing import TYPE_CHECKING, Final
 
 from grantcompass.domain.documents import DocumentBlock, Evidence, ParsedDocument
 from grantcompass.domain.eligibility import EligibilityRule, ExpectedValue
 from grantcompass.domain.enums import ReviewStatus, RuleKind
+from grantcompass.rules.candidate_evidence import (
+    EvidenceIntegrityError,
+    EvidenceIntegrityErrorCode,
+    source_url_for_document,
+    validate_candidates,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
-type EvidenceIntegrityErrorCode = Literal[
-    "missing_evidence",
-    "unknown_block_id",
-    "document_id_mismatch",
-    "content_hash_mismatch",
-    "source_url_mismatch",
-    "page_mismatch",
-    "section_path_mismatch",
-    "quote_not_in_block",
-]
+__all__ = (
+    "EvidenceIntegrityError",
+    "EvidenceIntegrityErrorCode",
+    "RegexRuleCandidateProvider",
+    "validate_candidates",
+)
 
+_FULLWIDTH_COLON: Final = "\N{FULLWIDTH COLON}"
+_COLON_CLASS: Final = rf"[:{_FULLWIDTH_COLON}]"
+_PUNCTUATION_CLASS: Final = rf"[,.;:{_FULLWIDTH_COLON}]"
 _BUSINESS_AGE: Final = re.compile(
-    r"(?:업력|창업\s*후)\s*(?P<value>\d{1,3})\s*(?P<unit>년|개월)\s*(?P<operator>이내|이하|미만|이상|초과)"
+    "".join(
+        (
+            rf"(?:업력(?:\s*[은는])?|창업\s*후)\s*{_COLON_CLASS}?\s*",
+            r"(?P<value>\d{1,3})\s*(?P<unit>년|개월)\s*",
+            r"(?P<operator>이내|이하|미만|이상|초과)",
+        )
+    )
 )
 _REPRESENTATIVE_AGE: Final = re.compile(
     r"대표자(?:\s*(?:연령|나이))?\s*(?:만\s*)?(?P<value>\d{1,3})\s*세\s*(?P<operator>이하|미만|이상|초과)"
 )
 _REGION_NAME: Final = r"[가-힣]{2,}(?:특별자치시|특별자치도|특별시|광역시|도|시|군|구)"
-_REGION_EXCLUSION: Final = re.compile(rf"(?P<value>{_REGION_NAME})\s*소재\s*(?:기업\s*)?제외")
+_REGION_EXCLUSION: Final = re.compile(
+    "".join(
+        (
+            rf"(?P<value>{_REGION_NAME})\s*",
+            r"(?:소재(?:\s*기업)?|본사\s*소재)\s*",
+            rf"(?:[은는을를]\s*)?(?:{_PUNCTUATION_CLASS}\s*)?제외",
+        )
+    )
+)
 _REGION_INCLUSION: Final = re.compile(
     rf"(?P<value>{_REGION_NAME})\s*(?:소재(?:\s*기업)?|본사\s*소재)"
 )
 _INDUSTRY_EXCLUSION: Final = re.compile(
-    r"(?:업종\s*[:\N{FULLWIDTH COLON}]?\s*)?(?P<value>[가-힣A-Za-z0-9·]+업)\s*(?:은\s*)?제외"
+    "".join(
+        (
+            rf"(?:업종\s*{_COLON_CLASS}?\s*)?",
+            r"(?P<value>[가-힣A-Za-z0-9·]+업)\s*(?:[은는을를]\s*)?제외",
+        )
+    )
 )
+_FOLLOWING_NEGATION: Final = re.compile(
+    rf"\s*(?:{_PUNCTUATION_CLASS}\s*)?(?:지원\s*)?(?:불가|제외)"
+)
+_FOLLOWING_AGE_BOUND: Final = re.compile(r"\s+\d{1,3}\s*(?:년|개월)\s*(?:이내|이하|미만|이상|초과)")
+_GENERIC_INDUSTRY_NOUNS: Final = frozenset({"기업", "창업"})
 _OPERATORS: Final = {
     "이내": "lte",
     "이하": "lte",
@@ -47,20 +75,6 @@ _OPERATORS: Final = {
     "초과": "gt",
 }
 _RULE_VERSION: Final = "regex-v1"
-_MISSING_EVIDENCE: Final[EvidenceIntegrityErrorCode] = "missing_evidence"
-_UNKNOWN_BLOCK_ID: Final[EvidenceIntegrityErrorCode] = "unknown_block_id"
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceIntegrityError(Exception):
-    """Finite evidence-integrity failure safe for boundary handling."""
-
-    code: EvidenceIntegrityErrorCode
-
-    @override
-    def __str__(self) -> str:
-        """Return the stable machine-readable integrity code."""
-        return self.code
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +107,7 @@ class RegexRuleCandidateProvider:
         evidence = Evidence(
             document_id=document.document_id,
             block_id=block.block_id,
-            source_url=_source_url(str(document.document_id)),
+            source_url=source_url_for_document(str(document.document_id)),
             page=block.page,
             section_path=block.section_path,
             quote=candidate.quote,
@@ -110,61 +124,45 @@ class RegexRuleCandidateProvider:
         )
 
 
-def validate_candidates(
-    rules: Sequence[EligibilityRule],
-    document: ParsedDocument,
-) -> tuple[EligibilityRule, ...]:
-    """Reject candidates whose evidence does not exactly match parser output."""
-    blocks = {block.block_id: block for block in document.blocks}
-    expected_url = _source_url(str(document.document_id))
-    for rule in rules:
-        if not rule.evidence:
-            raise EvidenceIntegrityError(_MISSING_EVIDENCE)
-        for evidence in rule.evidence:
-            block = blocks.get(evidence.block_id)
-            if block is None:
-                raise EvidenceIntegrityError(_UNKNOWN_BLOCK_ID)
-            _validate_evidence(evidence, block, document, expected_url)
-    return tuple(rules)
-
-
-def _validate_evidence(
-    evidence: Evidence,
-    block: DocumentBlock,
-    document: ParsedDocument,
-    expected_url: str,
-) -> None:
-    checks: tuple[tuple[bool, EvidenceIntegrityErrorCode], ...] = (
-        (evidence.document_id == document.document_id, "document_id_mismatch"),
-        (evidence.content_hash == document.content_hash, "content_hash_mismatch"),
-        (evidence.source_url == expected_url, "source_url_mismatch"),
-        (evidence.page == block.page, "page_mismatch"),
-        (evidence.section_path == block.section_path, "section_path_mismatch"),
-        (evidence.quote in block.text, "quote_not_in_block"),
-    )
-    for valid, code in checks:
-        if not valid:
-            raise EvidenceIntegrityError(code)
-
-
 def _matches(text: str) -> tuple[_RuleMatch, ...]:
-    matches = [
-        *_pattern_matches(_BUSINESS_AGE, text, RuleKind.BUSINESS_AGE_MONTHS, _business_value),
-        *_pattern_matches(
+    business_age = tuple(
+        candidate
+        for candidate in _pattern_matches(
+            _BUSINESS_AGE,
+            text,
+            RuleKind.BUSINESS_AGE_MONTHS,
+            _business_value,
+        )
+        if not _has_following_negation(text, candidate)
+        and not _has_following_age_bound(text, candidate)
+    )
+    representative_age = tuple(
+        candidate
+        for candidate in _pattern_matches(
             _REPRESENTATIVE_AGE,
             text,
             RuleKind.REPRESENTATIVE_AGE,
             _integer_value,
-        ),
-        *_pattern_matches(_REGION_EXCLUSION, text, RuleKind.REGION, _string_value, "not_in"),
-        *_pattern_matches(_REGION_INCLUSION, text, RuleKind.REGION, _string_value, "in"),
-        *_pattern_matches(
+        )
+        if not _has_following_negation(text, candidate)
+    )
+    industries = tuple(
+        candidate
+        for candidate in _pattern_matches(
             _INDUSTRY_EXCLUSION,
             text,
             RuleKind.INDUSTRY,
             _string_value,
             "not_in",
-        ),
+        )
+        if candidate.expected_value not in _GENERIC_INDUSTRY_NOUNS
+    )
+    matches = [
+        *business_age,
+        *representative_age,
+        *_pattern_matches(_REGION_EXCLUSION, text, RuleKind.REGION, _string_value, "not_in"),
+        *_pattern_matches(_REGION_INCLUSION, text, RuleKind.REGION, _string_value, "in"),
+        *industries,
     ]
     selected: list[_RuleMatch] = []
     for candidate in sorted(
@@ -211,5 +209,9 @@ def _overlaps(left: tuple[int, int], right: tuple[int, int]) -> bool:
     return left[0] < right[1] and right[0] < left[1]
 
 
-def _source_url(document_id: str) -> str:
-    return f"grantcompass://documents/{quote(document_id, safe='')}"
+def _has_following_negation(text: str, candidate: _RuleMatch) -> bool:
+    return _FOLLOWING_NEGATION.match(text, candidate.span[1]) is not None
+
+
+def _has_following_age_bound(text: str, candidate: _RuleMatch) -> bool:
+    return _FOLLOWING_AGE_BOUND.match(text, candidate.span[1]) is not None

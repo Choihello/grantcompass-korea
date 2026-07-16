@@ -13,6 +13,7 @@ from grantcompass.rules.benchmark import (
     BenchmarkLocation,
     BenchmarkRule,
     load_benchmark_cases,
+    resolve_benchmark_fixture,
 )
 from grantcompass.rules.candidates import RegexRuleCandidateProvider
 
@@ -24,7 +25,7 @@ MANIFEST_PATH = FIXTURE_ROOT / "documents.jsonl"
 
 
 def _parse(case: BenchmarkCase) -> ParsedDocument:
-    content = (FIXTURE_ROOT / case.fixture_path).read_bytes()
+    content = resolve_benchmark_fixture(FIXTURE_ROOT, case.fixture_path).read_bytes()
     suffix = Path(case.fixture_path).suffix.casefold()
     if suffix == ".hwpx":
         return HwpxParser().parse(case.document_id, content, case.fixture_path)
@@ -47,11 +48,25 @@ def test_every_benchmark_rule_has_resolvable_location() -> None:
     # Then: all 30 unique cases exactly match their reviewed rules and evidence locations.
     assert len(results) == 30
     assert len({case.fixture_path for case, _document, _rules in results}) == 30
+    assert len({case.document_id for case, _document, _rules in results}) == 30
+    assert len({case.content_hash for case, _document, _rules in results}) == 30
+    assert (
+        len(
+            {
+                (
+                    case.expected_rules,
+                    tuple(location.quote for location in case.expected_locations),
+                )
+                for case, _document, _rules in results
+            }
+        )
+        == 30
+    )
     assert sum(case.fixture_path.endswith(".hwpx") for case, _document, _rules in results) == 15
     assert sum(case.fixture_path.endswith(".pdf") for case, _document, _rules in results) == 15
     assert sum(not case.expected_rules for case, _document, _rules in results) == 1
     for case, document, rules in results:
-        content = (FIXTURE_ROOT / case.fixture_path).read_bytes()
+        content = resolve_benchmark_fixture(FIXTURE_ROOT, case.fixture_path).read_bytes()
         assert sha256(content).hexdigest() == case.content_hash
         assert case.expected_rules == tuple(BenchmarkRule.from_rule(rule) for rule in rules)
         assert case.expected_locations == tuple(
@@ -78,5 +93,7 @@ def test_benchmark_generation_is_byte_deterministic(tmp_path: Path) -> None:
     build(first)
     build(second)
 
-    # Then: every relative path and byte hash is identical.
+    # Then: both runs exactly reproduce the complete committed artifact map.
+    assert len(_tree_hashes(first)) == 31
     assert _tree_hashes(first) == _tree_hashes(second)
+    assert _tree_hashes(first) == _tree_hashes(FIXTURE_ROOT)

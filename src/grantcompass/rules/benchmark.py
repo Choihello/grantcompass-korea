@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ClassVar, Final, Literal, override
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 if TYPE_CHECKING:
     from grantcompass.domain.documents import Evidence
@@ -20,14 +20,19 @@ type BenchmarkRuleKind = Literal[
 ]
 type BenchmarkOperator = Literal["lte", "lt", "gte", "gt", "in", "not_in"]
 type BenchmarkValue = str | int
-type ManifestErrorCode = Literal["invalid_jsonl", "empty_manifest"]
+type ManifestErrorCode = Literal[
+    "invalid_jsonl",
+    "empty_manifest",
+    "unsafe_fixture_path",
+    "unsupported_fixture_type",
+]
 
 _AUTOMATIC: Final = "automatic"
 _RULE_VERSION: Final = "regex-v1"
 _INVALID_JSONL: Final[ManifestErrorCode] = "invalid_jsonl"
 _EMPTY_MANIFEST: Final[ManifestErrorCode] = "empty_manifest"
-_FIXTURE_OUTSIDE_ROOT: Final = "fixture_path must stay within the benchmark root"
-_FIXTURE_WRONG_SUFFIX: Final = "fixture_path must identify an HWPX or PDF"
+_UNSAFE_FIXTURE_PATH: Final[ManifestErrorCode] = "unsafe_fixture_path"
+_UNSUPPORTED_FIXTURE_TYPE: Final[ManifestErrorCode] = "unsupported_fixture_type"
 _BENCHMARK_KINDS: Final[dict[str, BenchmarkRuleKind]] = {
     "business_age_months": "business_age_months",
     "representative_age": "representative_age",
@@ -129,17 +134,6 @@ class BenchmarkCase(BaseModel):
     expected_locations: tuple[BenchmarkLocation, ...]
     reviewed_by_role: Literal["startup-support-program-manager"]
 
-    @field_validator("fixture_path")
-    @classmethod
-    def validate_fixture_path(cls, value: str) -> str:
-        """Accept only benchmark-local HWPX and PDF paths."""
-        path = PurePosixPath(value)
-        if path.is_absolute() or ".." in path.parts:
-            raise ValueError(_FIXTURE_OUTSIDE_ROOT)
-        if path.suffix.casefold() not in {".hwpx", ".pdf"}:
-            raise ValueError(_FIXTURE_WRONG_SUFFIX)
-        return value
-
 
 def load_benchmark_cases(path: Path) -> tuple[BenchmarkCase, ...]:
     """Parse every non-empty JSONL row exactly once through Pydantic."""
@@ -149,10 +143,36 @@ def load_benchmark_cases(path: Path) -> tuple[BenchmarkCase, ...]:
     cases: list[BenchmarkCase] = []
     for line_number, row in enumerate(rows, start=1):
         try:
-            cases.append(BenchmarkCase.model_validate_json(row))
+            case = BenchmarkCase.model_validate_json(row)
         except ValidationError as error:
             raise BenchmarkManifestError(_INVALID_JSONL, line_number) from error
+        try:
+            _ = resolve_benchmark_fixture(path.parent, case.fixture_path)
+        except BenchmarkManifestError as error:
+            raise BenchmarkManifestError(error.code, line_number) from error
+        cases.append(case)
     return tuple(cases)
+
+
+def resolve_benchmark_fixture(root: Path, fixture_path: str) -> Path:
+    """Resolve one canonical fixture path while confining it to the benchmark root."""
+    parts = fixture_path.split("/")
+    if (
+        "\\" in fixture_path
+        or ":" in fixture_path
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise BenchmarkManifestError(_UNSAFE_FIXTURE_PATH)
+    posix_path = PurePosixPath(fixture_path)
+    if posix_path.is_absolute():
+        raise BenchmarkManifestError(_UNSAFE_FIXTURE_PATH)
+    if posix_path.suffix.casefold() not in {".hwpx", ".pdf"}:
+        raise BenchmarkManifestError(_UNSUPPORTED_FIXTURE_TYPE)
+    resolved_root = root.resolve()
+    resolved = resolved_root.joinpath(*parts).resolve()
+    if not resolved.is_relative_to(resolved_root):
+        raise BenchmarkManifestError(_UNSAFE_FIXTURE_PATH)
+    return resolved
 
 
 def _benchmark_kind(value: str) -> BenchmarkRuleKind:

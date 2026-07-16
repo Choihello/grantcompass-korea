@@ -37,6 +37,8 @@ uv run --no-sync python scripts/build_benchmark.py
 
 The generator fixes ZIP timestamps, serialization settings, document names, and source text.
 Independent generations must have identical relative paths and SHA-256 hashes.
+The PEP 723 environment pins `pymupdf==1.28.0`, matching the project lock, so PDF bytes cannot
+silently change under a wider dependency range.
 
 PDF generation uses PyMuPDF's built-in Korean font instead of ReportLab. This is an intentional
 exception: the benchmark must exercise a reproducible Korean text layer that the production
@@ -53,6 +55,10 @@ are visually rendered during review to check clipping, glyphs, and legibility.
 - exact evidence coordinates and quoted substrings
 - the non-personal reviewer role
 
+Fixture paths use canonical POSIX components. One root-confined resolver rejects backslashes,
+drives, UNC/device forms, traversal, dot components, empty components, unsupported suffixes, and
+any resolved path outside the benchmark root before a binary is read.
+
 Evidence uses `grantcompass://documents/<percent-encoded-document-id>`. An accepted evidence item
 must agree with the parsed document identifier and hash, and with the referenced block's page,
 section path, and source substring.
@@ -62,7 +68,10 @@ section path, and source substring.
 The integration test reads every generated binary through the real HWPX or PDF parser before
 calling `RegexRuleCandidateProvider`. It rejects parser warnings, hash drift, missing evidence,
 unexpected rules, unresolved locations, duplicate fixture paths, format imbalance, and generation
-nondeterminism.
+nondeterminism. It also requires unique document identifiers, content hashes, and normalized case
+signatures, and compares both independent runs byte-for-byte with the complete committed 31-artifact
+tree. Separately authored adversarial goldens exercise reviewed regex failures without deriving
+their expected normalized fields from the generator case table.
 
 The deterministic provider intentionally recognizes only:
 
