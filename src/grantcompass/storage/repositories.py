@@ -1,6 +1,7 @@
 """Transactional async repositories for canonical persistence."""
 
 from datetime import datetime
+from sqlite3 import IntegrityError as SQLiteIntegrityError
 from typing import override
 
 from anyio.lowlevel import checkpoint
@@ -36,6 +37,26 @@ from grantcompass.storage.table_programs import (
 )
 
 _MAX_INGEST_ATTEMPTS = 3
+_RETRYABLE_SQLITE_INGEST_RACES = frozenset(
+    {
+        "UNIQUE constraint failed: programs.canonical_key",
+        (
+            "UNIQUE constraint failed: notice_versions.source, "
+            "notice_versions.source_notice_id, notice_versions.content_hash"
+        ),
+        (
+            "UNIQUE constraint failed: current_notice_versions.source, "
+            "current_notice_versions.source_notice_id"
+        ),
+        "UNIQUE constraint failed: current_notice_versions.version_id",
+    }
+)
+
+
+def _is_retryable_ingest_race(error: IntegrityError) -> bool:
+    return isinstance(error.orig, SQLiteIntegrityError) and str(error.orig) in (
+        _RETRYABLE_SQLITE_INGEST_RACES
+    )
 
 
 class IngestRaceExhaustedError(RuntimeError):
@@ -109,8 +130,10 @@ class ProgramRepository:
         while attempts_remaining > 0:
             try:
                 return await NoticeIngestor(self._session).upsert(raw, collected_at)
-            except IntegrityError:
+            except IntegrityError as error:
                 await self._session.rollback()
+                if not _is_retryable_ingest_race(error):
+                    raise
                 attempts_remaining -= 1
                 if attempts_remaining == 0:
                     raise IngestRaceExhaustedError from None
