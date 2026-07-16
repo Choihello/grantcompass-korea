@@ -70,3 +70,31 @@ class ChangeImpactRow(Base):
     assessment_id: Mapped[int] = mapped_column(
         ForeignKey("assessments.id"), primary_key=True, index=True
     )
+
+
+class CurrentNoticeVersionRow(Base):
+    """Explicit current pointer for one immutable source-notice identity."""
+
+    __tablename__: str = "current_notice_versions"
+    __table_args__: tuple[UniqueConstraint] = (
+        UniqueConstraint("source", "source_notice_id", name="uq_current_notice_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(30), index=True)
+    source_notice_id: Mapped[str] = mapped_column(String(300), index=True)
+    version_id: Mapped[int] = mapped_column(
+        ForeignKey("notice_versions.id"), unique=True, index=True
+    )
+
+
+class AssessmentReviewNoteRow(Base):
+    """Append-only human note attached to a reviewed assessment."""
+
+    __tablename__: str = "assessment_review_notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assessment_id: Mapped[int] = mapped_column(ForeignKey("assessments.id"), index=True)
+    reviewer_name: Mapped[str] = mapped_column(String(300))
+    note: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column()

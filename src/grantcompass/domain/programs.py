@@ -27,6 +27,7 @@ __all__ = [
     "AssessmentId",
     "AttachmentId",
     "AttachmentRef",
+    "CanonicalProgramView",
     "ChangeSet",
     "ConflictValue",
     "FieldConflict",
@@ -39,6 +40,8 @@ __all__ = [
     "RawNotice",
     "canonical_key_for",
     "canonical_key_from_fields",
+    "has_complete_merge_identity",
+    "storage_key_for",
 ]
 
 
@@ -160,6 +163,19 @@ class ChangeSet:
 
 
 @dataclass(frozen=True, slots=True)
+class CanonicalProgramView:
+    """Conflict-aware public program state derived from current source pointers."""
+
+    id: ProgramId
+    title: str | None
+    organization: str | None
+    summary: str | None
+    application_start: date | None
+    application_end: date | None
+    conflicts: tuple[FieldConflict, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class IngestResult:
     """Immutable outcome of one idempotent notice-ingestion transaction."""
 
@@ -173,6 +189,25 @@ class IngestResult:
 def canonical_key_for(raw: RawNotice) -> str:
     """Build the 0.1 merge key from normalized title, organization, and deadline."""
     return canonical_key_from_fields(raw.title, raw.organization, raw.application_end)
+
+
+def has_complete_merge_identity(raw: RawNotice) -> bool:
+    """Return whether every conservative automatic-merge field is present."""
+    return (
+        bool(raw.title.strip())
+        and raw.organization is not None
+        and bool(raw.organization.strip())
+        and raw.application_end is not None
+    )
+
+
+def storage_key_for(raw: RawNotice) -> str:
+    """Return an exact merge key or a source-identity-isolated incomplete key."""
+    canonical_key = canonical_key_for(raw)
+    if has_complete_merge_identity(raw):
+        return canonical_key
+    identity = f"{raw.source.value}|{raw.source_notice_id}"
+    return f"{canonical_key}|incomplete:{sha256(identity.encode()).hexdigest()}"
 
 
 def canonical_key_from_fields(

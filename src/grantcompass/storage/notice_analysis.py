@@ -9,19 +9,19 @@ from pydantic import TypeAdapter
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from grantcompass.domain.enums import ReviewStatus, SourceName
+from grantcompass.domain.enums import ReviewStatus
 from grantcompass.domain.ids import AssessmentId, ChangeSetId, NoticeVersionId, ProgramId
-from grantcompass.domain.programs import (
-    ChangeSet,
-    ConflictValue,
-    RawNotice,
-    canonical_key_from_fields,
-)
+from grantcompass.domain.programs import ChangeSet, ConflictValue, RawNotice
 from grantcompass.storage.notice_snapshots import (
     NoticeSnapshot,
     changed_fields,
     conflict_field_names,
     parse_snapshot,
+)
+from grantcompass.storage.notice_state import (
+    LegacyRefreshState,
+    load_current_snapshots,
+    refresh_legacy_program,
 )
 from grantcompass.storage.table_eligibility import AssessmentRow
 from grantcompass.storage.table_notice_analysis import (
@@ -110,7 +110,7 @@ class NoticeAnalyzer:
 
     async def sync_conflicts(self, program_id: ProgramId) -> None:
         """Replace current conflicts from the latest snapshot of every source identity."""
-        snapshots = await self._latest_source_snapshots(program_id)
+        snapshots = await load_current_snapshots(self._session, program_id)
         _ = await self._session.execute(
             delete(FieldConflictRow).where(FieldConflictRow.program_id == program_id)
         )
@@ -128,62 +128,14 @@ class NoticeAnalyzer:
                         detected_at=self._detected_at,
                     )
                 )
-        await self._refresh_consensus_program(program_id, snapshots)
-
-    async def _latest_source_snapshots(
-        self,
-        program_id: ProgramId,
-    ) -> dict[SourceName, NoticeSnapshot]:
-        rows = (
-            await self._session.scalars(
-                select(NoticeVersionRow)
-                .where(NoticeVersionRow.program_id == program_id)
-                .order_by(NoticeVersionRow.id)
-            )
-        ).all()
-        latest: dict[SourceName, NoticeSnapshot] = {}
-        for row in rows:
-            snapshot = parse_snapshot(row.normalized_json)
-            if snapshot is not None:
-                latest[SourceName(row.source)] = snapshot
-        return latest
-
-    async def _refresh_consensus_program(
-        self,
-        program_id: ProgramId,
-        snapshots: dict[SourceName, NoticeSnapshot],
-    ) -> None:
-        if not snapshots:
-            return
-        program = (
-            await self._session.scalars(select(ProgramRow).where(ProgramRow.id == program_id))
-        ).one()
-        titles = {item.title for item in snapshots.values()}
-        organizations = {item.organization for item in snapshots.values()}
-        starts = {item.application_start for item in snapshots.values()}
-        ends = {item.application_end for item in snapshots.values()}
-        if len(titles) == 1:
-            program.title = next(iter(titles))
-        if len(organizations) == 1:
-            program.organization = next(iter(organizations))
-        if len(starts) == 1:
-            program.application_start = next(iter(starts))
-        if len(ends) == 1:
-            program.application_end = next(iter(ends))
-        new_key = canonical_key_from_fields(
-            program.title,
-            program.organization,
-            program.application_end,
+        await refresh_legacy_program(
+            self._session,
+            LegacyRefreshState(
+                program_id=program_id,
+                snapshots=snapshots,
+                detected_at=self._detected_at,
+            ),
         )
-        collision = await self._session.scalar(
-            select(ProgramRow.id).where(
-                ProgramRow.canonical_key == new_key,
-                ProgramRow.id != program_id,
-            )
-        )
-        if collision is None:
-            program.canonical_key = new_key
-        program.updated_at = self._detected_at
 
     async def record_change(
         self,

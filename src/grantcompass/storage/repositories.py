@@ -1,31 +1,50 @@
 """Transactional async repositories for canonical persistence."""
 
 from datetime import datetime
+from typing import override
 
+from anyio.lowlevel import checkpoint
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.enums import SourceName
 from grantcompass.domain.programs import (
+    CanonicalProgramView,
     FieldConflict,
     IngestResult,
     MergeCandidate,
+    NoticeVersionId,
     ProgramId,
     RawNotice,
-    canonical_key_for,
+    has_complete_merge_identity,
+    storage_key_for,
 )
 from grantcompass.domain.source_runs import SourceRunFailure, SourceRunId, SourceRunSuccess
 from grantcompass.storage.notice_ingest import NoticeIngestor
 from grantcompass.storage.notice_queries import (
     find_exact_program,
+    read_current_version_id,
     read_field_conflicts,
     read_merge_candidates,
     read_notice_sources,
+    read_program_view,
 )
 from grantcompass.storage.table_programs import (
     NoticeVersionRow,
     SourceRunRow,
 )
+
+_MAX_INGEST_ATTEMPTS = 3
+
+
+class IngestRaceExhaustedError(RuntimeError):
+    """Stable failure after bounded canonical/source race reconciliation."""
+
+    @override
+    def __str__(self) -> str:
+        """Return a storage-safe diagnostic without raw database details."""
+        return "Concurrent notice ingestion could not be reconciled"
 
 
 class ProgramRepository:
@@ -86,11 +105,35 @@ class ProgramRepository:
 
     async def upsert_notice(self, raw: RawNotice, collected_at: datetime) -> IngestResult:
         """Atomically persist one idempotent source notice snapshot."""
-        return await NoticeIngestor(self._session).upsert(raw, collected_at)
+        attempts_remaining = _MAX_INGEST_ATTEMPTS
+        while attempts_remaining > 0:
+            try:
+                return await NoticeIngestor(self._session).upsert(raw, collected_at)
+            except IntegrityError:
+                await self._session.rollback()
+                attempts_remaining -= 1
+                if attempts_remaining == 0:
+                    raise IngestRaceExhaustedError from None
+                await checkpoint()
+        raise IngestRaceExhaustedError
 
     async def find_merge_candidate(self, raw: RawNotice) -> ProgramId | None:
         """Return a merge target only for the exact conservative identity."""
-        return await find_exact_program(self._session, canonical_key_for(raw))
+        if not has_complete_merge_identity(raw):
+            return None
+        return await find_exact_program(self._session, storage_key_for(raw))
+
+    async def current_notice_version(
+        self,
+        source: SourceName,
+        source_notice_id: str,
+    ) -> NoticeVersionId | None:
+        """Return the explicit current version for one source identity."""
+        return await read_current_version_id(self._session, source, source_notice_id)
+
+    async def get_program(self, program_id: ProgramId) -> CanonicalProgramView:
+        """Return conflict-aware canonical state without hidden source precedence."""
+        return await read_program_view(self._session, program_id)
 
     async def notice_sources(self, program_id: ProgramId) -> frozenset[SourceName]:
         """Return every source retained for one canonical program."""

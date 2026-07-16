@@ -5,8 +5,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.enums import SourceName
-from grantcompass.domain.ids import ProgramId
-from grantcompass.domain.programs import ConflictValue, FieldConflict, MergeCandidate
+from grantcompass.domain.ids import NoticeVersionId, ProgramId
+from grantcompass.domain.programs import (
+    CanonicalProgramView,
+    ConflictValue,
+    FieldConflict,
+    MergeCandidate,
+)
+from grantcompass.storage.notice_state import load_current_snapshots, read_current_version
 from grantcompass.storage.table_notice_analysis import FieldConflictRow, MergeCandidateRow
 from grantcompass.storage.table_programs import NoticeVersionRow, ProgramRow
 
@@ -80,3 +86,35 @@ async def find_exact_program(
         select(ProgramRow.id).where(ProgramRow.canonical_key == canonical_key)
     )
     return ProgramId(value) if value is not None else None
+
+
+async def read_current_version_id(
+    session: AsyncSession,
+    source: SourceName,
+    source_notice_id: str,
+) -> NoticeVersionId | None:
+    """Return the explicit current version ID for one source notice."""
+    row = await read_current_version(session, source, source_notice_id)
+    return NoticeVersionId(row.id) if row is not None else None
+
+
+async def read_program_view(
+    session: AsyncSession,
+    program_id: ProgramId,
+) -> CanonicalProgramView:
+    """Build a neutral public view from current source consensus and conflicts."""
+    snapshots = await load_current_snapshots(session, program_id)
+    titles = {item.title for item in snapshots.values()}
+    organizations = {item.organization for item in snapshots.values()}
+    summaries = {item.summary for item in snapshots.values()}
+    starts = {item.application_start for item in snapshots.values()}
+    ends = {item.application_end for item in snapshots.values()}
+    return CanonicalProgramView(
+        id=program_id,
+        title=next(iter(titles)) if len(titles) == 1 else None,
+        organization=next(iter(organizations)) if len(organizations) == 1 else None,
+        summary=next(iter(summaries)) if len(summaries) == 1 else None,
+        application_start=next(iter(starts)) if len(starts) == 1 else None,
+        application_end=next(iter(ends)) if len(ends) == 1 else None,
+        conflicts=await read_field_conflicts(session, program_id),
+    )

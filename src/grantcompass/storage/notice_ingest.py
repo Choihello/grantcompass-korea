@@ -9,10 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.ids import NoticeVersionId, ProgramId
 from grantcompass.domain.json_types import thaw_json_object
-from grantcompass.domain.programs import IngestResult, RawNotice, canonical_key_for
+from grantcompass.domain.programs import (
+    IngestResult,
+    RawNotice,
+    has_complete_merge_identity,
+    storage_key_for,
+)
 from grantcompass.storage.notice_analysis import NoticeAnalyzer, VersionTransition
 from grantcompass.storage.notice_queries import find_exact_program
 from grantcompass.storage.notice_snapshots import NoticeSnapshot
+from grantcompass.storage.notice_state import point_to_version, read_current_version
 from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow, ProgramRow
 
 
@@ -44,28 +50,32 @@ class NoticeIngestor:
         """Persist idempotently and atomically derive merge and change analysis."""
         async with self._session.begin():
             context = IngestContext(raw=raw, collected_at=collected_at)
-            existing, latest = await self._find_versions(raw)
-            if existing is not None:
+            existing, current = await self._find_versions(raw)
+            if existing is not None and current is not None and existing.id == current.id:
                 return IngestResult(
                     program_id=ProgramId(existing.program_id),
                     notice_version_id=NoticeVersionId(existing.id),
                     notice_version_created=False,
                 )
-            program_id, created_program = await self._resolve_program(context, latest)
+            linked = current if current is not None else existing
+            program_id, created_program = await self._resolve_program(context, linked)
             snapshot = NoticeSnapshot.from_raw(raw)
-            version = await self._insert_version(
-                VersionInsert(context=context, program_id=program_id, snapshot=snapshot)
-            )
+            version = existing
+            if version is None:
+                version = await self._insert_version(
+                    VersionInsert(context=context, program_id=program_id, snapshot=snapshot)
+                )
+            await point_to_version(self._session, version)
             analyzer = NoticeAnalyzer(self._session, collected_at)
             if created_program:
                 await analyzer.record_merge_candidate(program_id, raw)
             change_set = None
             impacted_ids = ()
-            if latest is not None:
+            if current is not None:
                 change_set, impacted_ids = await analyzer.record_change(
                     VersionTransition(
                         program_id=program_id,
-                        previous=latest,
+                        previous=current,
                         current=version,
                         current_snapshot=snapshot,
                     )
@@ -74,7 +84,7 @@ class NoticeIngestor:
             return IngestResult(
                 program_id=program_id,
                 notice_version_id=NoticeVersionId(version.id),
-                notice_version_created=True,
+                notice_version_created=existing is None,
                 change_set=change_set,
                 impacted_assessment_ids=impacted_ids,
             )
@@ -93,10 +103,8 @@ class NoticeIngestor:
                 NoticeVersionRow.content_hash == raw.content_hash(),
             )
         )
-        latest = await self._session.scalar(
-            select(NoticeVersionRow).where(*identity).order_by(NoticeVersionRow.id.desc()).limit(1)
-        )
-        return existing, latest
+        current = await read_current_version(self._session, raw.source, raw.source_notice_id)
+        return existing, current
 
     async def _resolve_program(
         self,
@@ -105,11 +113,12 @@ class NoticeIngestor:
     ) -> tuple[ProgramId, bool]:
         if latest is not None:
             return ProgramId(latest.program_id), False
-        exact_id = await find_exact_program(self._session, canonical_key_for(context.raw))
-        if exact_id is not None:
-            return exact_id, False
+        if has_complete_merge_identity(context.raw):
+            exact_id = await find_exact_program(self._session, storage_key_for(context.raw))
+            if exact_id is not None:
+                return exact_id, False
         row = ProgramRow(
-            canonical_key=canonical_key_for(context.raw),
+            canonical_key=storage_key_for(context.raw),
             title=" ".join(context.raw.title.split()),
             organization=context.raw.organization,
             application_start=context.raw.application_start,
