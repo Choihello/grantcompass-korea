@@ -1,7 +1,7 @@
 """Parsed-document and evidence provenance domain models."""
 
 from dataclasses import dataclass
-from typing import NewType
+from typing import Literal, NewType
 
 DocumentId = NewType("DocumentId", str)
 DocumentBlockId = NewType("DocumentBlockId", str)
@@ -14,7 +14,7 @@ class DocumentBlock:
 
     block_id: DocumentBlockId
     ordinal: int
-    kind: str
+    kind: Literal["paragraph", "table_cell", "ocr_text"]
     text: str
     page: int | None
     section_path: str | None

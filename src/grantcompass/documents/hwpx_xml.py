@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-from unicodedata import normalize
+from typing import TYPE_CHECKING, Final
 from xml.etree import ElementTree as ET
 
-from grantcompass.documents.base import DocumentBlock, parse_failure
+from defusedxml import ElementTree as DefusedET
+from defusedxml.common import DefusedXmlException
+
+from grantcompass.documents.base import DocumentBlock, ParseErrorCode, parse_failure
 from grantcompass.domain.documents import DocumentBlockId
 
 if TYPE_CHECKING:
     from grantcompass.documents.archive import SectionXml
 
-FORBIDDEN_DECLARATION = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
-INVALID_XML = "invalid_xml"
+INVALID_XML: Final[ParseErrorCode] = "invalid_xml"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,11 +37,14 @@ class _MappingState:
 
 def map_section(section: SectionXml, ordinal: int, table: int) -> MappedSection:
     """Parse one section without DTDs, entities, recovery, or external resources."""
-    if FORBIDDEN_DECLARATION.search(section.content) is not None:
-        raise parse_failure(INVALID_XML, "HWPX XML declarations are unsafe")
     try:
-        root = ET.fromstring(section.content)  # noqa: S314
-    except ET.ParseError as error:
+        root = DefusedET.fromstring(
+            section.content,
+            forbid_dtd=True,
+            forbid_entities=True,
+            forbid_external=True,
+        )
+    except (DefusedXmlException, ET.ParseError) as error:
         raise parse_failure(INVALID_XML, "HWPX section XML is malformed") from error
     state = _MappingState(ordinal=ordinal, table=table)
     _visit(root, state, section)
@@ -164,17 +167,22 @@ def _element_text(element: ET.Element) -> str:
     def collect(current: ET.Element) -> None:
         if current is not element and _local_name(current.tag) == "tbl":
             return
-        if _local_name(current.tag) == "t" and current.text is not None:
-            fragments.append(current.text)
+        if _local_name(current.tag) == "t":
+            fragments.append(_inline_text(current))
+            return
         for child in current:
             collect(child)
 
     collect(element)
-    return _normalize_text(" ".join(fragments))
+    return "".join(fragments)
 
 
-def _normalize_text(value: str) -> str:
-    return " ".join(normalize("NFC", value).split())
+def _inline_text(element: ET.Element) -> str:
+    fragments = [element.text or ""]
+    for child in element:
+        fragments.append(_inline_text(child))
+        fragments.append(child.tail or "")
+    return "".join(fragments)
 
 
 def _first_descendant(

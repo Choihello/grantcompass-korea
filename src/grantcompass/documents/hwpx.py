@@ -2,16 +2,17 @@
 
 from hashlib import sha256
 from pathlib import PurePath
+from typing import Final
 
 from grantcompass.documents.archive import read_sections
-from grantcompass.documents.base import DocumentBlock, ParsedDocument, parse_failure
+from grantcompass.documents.base import DocumentBlock, ParsedDocument, ParseErrorCode, parse_failure
 from grantcompass.documents.hwpx_xml import map_section
 from grantcompass.domain.documents import DocumentId
 
 PARSER_NAME = "hwpx"
 PARSER_VERSION = "1.0.0"
-UNSUPPORTED_DOCUMENT = "unsupported_document"
-INVALID_DOCUMENT_ID = "invalid_document_id"
+UNSUPPORTED_DOCUMENT: Final[ParseErrorCode] = "unsupported_document"
+INVALID_DOCUMENT_ID: Final[ParseErrorCode] = "invalid_document_id"
 
 
 class HwpxParser:
