@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from grantcompass.storage.table_base import Base
@@ -43,6 +43,7 @@ class NoticeVersionRow(Base):
     content_hash: Mapped[str] = mapped_column(String(64))
     detail_url: Mapped[str] = mapped_column(Text)
     raw_payload_json: Mapped[str] = mapped_column(Text)
+    normalized_json: Mapped[str] = mapped_column(Text, server_default=text("'{}'"))
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

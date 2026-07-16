@@ -1,0 +1,47 @@
+{
+  "jsonArray": {
+    "title": "기업마당 지원사업정보",
+    "link": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/list.do",
+    "description": "최신지원사업정보를 구독하세요",
+    "language": "ko-kr",
+    "copyright": "bizinfo",
+    "category": "bizinfo",
+    "ttl": "60",
+    "item": [
+      {
+        "title": "가상 로컬 창업 실험 지원사업",
+        "link": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000100001",
+        "seq": "PBLN_000000000100001",
+        "author": "가상중소기업부",
+        "excInsttNm": "가상창업지원원",
+        "description": "가상 초기기업의 지역문제 해결 실험을 지원합니다.",
+        "reqstDt": "20260701 ~ 20260731",
+        "flpthNm": "https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_100001&fileSn=0",
+        "fileNm": "가상 로컬 창업 실험 공고문.pdf",
+        "totCnt": "3",
+        "pblancNm": "가상 로컬 창업 실험 지원사업",
+        "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000100001",
+        "pblancId": "PBLN_000000000100001",
+        "jrsdInsttNm": "가상중소기업부",
+        "bsnsSumryCn": "가상 초기기업의 지역문제 해결 실험을 지원합니다.",
+        "reqstBeginEndDe": "20260701 ~ 20260731",
+        "hashTags": "가상,창업"
+      },
+      {
+        "title": "가상 해안지역 창업지원",
+        "link": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000100002",
+        "seq": "PBLN_000000000100002",
+        "author": "가상해안시",
+        "description": "가상 해안지역 소재 초기기업 지원",
+        "reqstDt": "20260801 ~ 20260820",
+        "totCnt": "3",
+        "pblancNm": "가상 해안지역 창업지원",
+        "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000100002",
+        "pblancId": "PBLN_000000000100002",
+        "jrsdInsttNm": "가상해안시",
+        "bsnsSumryCn": "가상 해안지역 소재 초기기업 지원",
+        "reqstBeginEndDe": "20260801 ~ 20260820"
+      }
+    ]
+  }
+}

@@ -13,10 +13,12 @@ import typer
 from pydantic import SecretStr
 
 from grantcompass.http import create_async_client
+from grantcompass.sources.bizinfo import BizinfoAdapter
 from grantcompass.sources.kstartup import KStartupAdapter
 
-_KEY_ENV: Final = "GRANTCOMPASS_KSTARTUP_SERVICE_KEY"
-_SOURCE_MESSAGE: Final = "only kstartup is available"
+_KSTARTUP_KEY_ENV: Final = "GRANTCOMPASS_KSTARTUP_SERVICE_KEY"
+_BIZINFO_KEY_ENV: Final = "GRANTCOMPASS_BIZINFO_SERVICE_KEY"
+_SOURCE_MESSAGE: Final = "source must be kstartup or bizinfo"
 
 
 async def _smoke_kstartup(service_key: SecretStr) -> None:
@@ -25,17 +27,25 @@ async def _smoke_kstartup(service_key: SecretStr) -> None:
     typer.echo(f"OK kstartup: items={len(page.items)} hash={page.response_hash[:8]}")
 
 
+async def _smoke_bizinfo(service_key: SecretStr) -> None:
+    async with create_async_client() as client:
+        page = await BizinfoAdapter(client, service_key).fetch_page(1, 1)
+    typer.echo(f"OK bizinfo: items={len(page.items)} hash={page.response_hash[:8]}")
+
+
 def main(
     source: Annotated[str, typer.Option(help="Official source to check.")] = "kstartup",
 ) -> None:
     """Run one selected source check with a bounded first-page request."""
-    if source != "kstartup":
+    if source not in {"kstartup", "bizinfo"}:
         raise typer.BadParameter(_SOURCE_MESSAGE)
-    key = os.environ.get(_KEY_ENV)
+    key_env = _KSTARTUP_KEY_ENV if source == "kstartup" else _BIZINFO_KEY_ENV
+    key = os.environ.get(key_env)
     if key is None or not key.strip():
-        typer.echo("SKIP kstartup: key missing")
+        typer.echo(f"SKIP {source}: key missing")
         return
-    anyio.run(_smoke_kstartup, SecretStr(key.strip()))
+    smoke = _smoke_kstartup if source == "kstartup" else _smoke_bizinfo
+    anyio.run(smoke, SecretStr(key.strip()))
 
 
 if __name__ == "__main__":

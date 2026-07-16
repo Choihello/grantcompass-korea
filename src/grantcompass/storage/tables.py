@@ -14,6 +14,12 @@ from grantcompass.storage.table_eligibility import (
     EligibilityRuleRow,
     RuleAssessmentRow,
 )
+from grantcompass.storage.table_notice_analysis import (
+    ChangeImpactRow,
+    ChangeSetRow,
+    FieldConflictRow,
+    MergeCandidateRow,
+)
 from grantcompass.storage.table_programs import (
     AttachmentRow,
     NoticeVersionRow,
@@ -28,11 +34,15 @@ __all__ = [
     "AuditEventRow",
     "Base",
     "CaseRow",
+    "ChangeImpactRow",
+    "ChangeSetRow",
     "DocumentBlockRow",
     "DocumentRow",
     "EligibilityRuleRow",
     "EvidenceRow",
+    "FieldConflictRow",
     "ManagedCompanyRow",
+    "MergeCandidateRow",
     "NoticeVersionRow",
     "ProgramRow",
     "RuleAssessmentRow",

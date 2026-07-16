@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 
 from grantcompass.domain.documents import Evidence, EvidenceId
 from grantcompass.domain.enums import ConditionStatus, FinalStatus, ReviewStatus, RuleKind
+from grantcompass.domain.ids import AssessmentId, ProgramId
 from grantcompass.domain.json_types import (
     FrozenJsonObject,
     JsonObject,
@@ -15,11 +16,9 @@ from grantcompass.domain.json_types import (
     freeze_json_object,
     thaw_json_object,
 )
-from grantcompass.domain.programs import ProgramId
 
 ApplicantProfileId = NewType("ApplicantProfileId", int)
 EligibilityRuleId = NewType("EligibilityRuleId", int)
-AssessmentId = NewType("AssessmentId", int)
 
 type ExpectedValue = JsonScalar | tuple[JsonScalar, ...]
 

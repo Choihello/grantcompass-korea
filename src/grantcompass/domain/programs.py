@@ -3,12 +3,19 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import sha256
-from typing import ClassVar, NewType
+from typing import ClassVar
 from unicodedata import normalize
 
 from pydantic import BaseModel, ConfigDict, HttpUrl, field_serializer, field_validator
 
 from grantcompass.domain.enums import SourceName
+from grantcompass.domain.ids import (
+    AssessmentId,
+    AttachmentId,
+    ChangeSetId,
+    NoticeVersionId,
+    ProgramId,
+)
 from grantcompass.domain.json_types import (
     FrozenJsonObject,
     JsonObject,
@@ -16,9 +23,23 @@ from grantcompass.domain.json_types import (
     thaw_json_object,
 )
 
-ProgramId = NewType("ProgramId", int)
-NoticeVersionId = NewType("NoticeVersionId", int)
-AttachmentId = NewType("AttachmentId", int)
+__all__ = [
+    "AssessmentId",
+    "AttachmentId",
+    "AttachmentRef",
+    "ChangeSet",
+    "ConflictValue",
+    "FieldConflict",
+    "IngestResult",
+    "MergeCandidate",
+    "NoticeVersion",
+    "NoticeVersionId",
+    "Program",
+    "ProgramId",
+    "RawNotice",
+    "canonical_key_for",
+    "canonical_key_from_fields",
+]
 
 
 class AttachmentRef(BaseModel):
@@ -101,19 +122,68 @@ class NoticeVersion:
 
 
 @dataclass(frozen=True, slots=True)
+class ConflictValue:
+    """One source-specific normalized value retained during a conflict."""
+
+    source: SourceName
+    value: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class FieldConflict:
+    """Current disagreement among official source values for one program field."""
+
+    program_id: ProgramId
+    field_name: str
+    values: tuple[ConflictValue, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MergeCandidate:
+    """Pair withheld from automatic merging for human review."""
+
+    left_program_id: ProgramId
+    right_program_id: ProgramId
+    title_similarity: float
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class ChangeSet:
+    """Immutable link between consecutive changed notice snapshots."""
+
+    id: ChangeSetId
+    kind: str
+    changed_fields: tuple[str, ...]
+    previous_version_id: NoticeVersionId
+    current_version_id: NoticeVersionId
+
+
+@dataclass(frozen=True, slots=True)
 class IngestResult:
     """Immutable outcome of one idempotent notice-ingestion transaction."""
 
     program_id: ProgramId
     notice_version_id: NoticeVersionId
     notice_version_created: bool
+    change_set: ChangeSet | None = None
+    impacted_assessment_ids: tuple[AssessmentId, ...] = ()
 
 
 def canonical_key_for(raw: RawNotice) -> str:
     """Build the 0.1 merge key from normalized title, organization, and deadline."""
-    title = " ".join(normalize("NFKC", raw.title).casefold().split())
+    return canonical_key_from_fields(raw.title, raw.organization, raw.application_end)
+
+
+def canonical_key_from_fields(
+    title_value: str,
+    organization_value: str | None,
+    application_end_value: date | None,
+) -> str:
+    """Build an exact normalized identity from the three conservative merge fields."""
+    title = " ".join(normalize("NFKC", title_value).casefold().split())
     organization = ""
-    if raw.organization is not None:
-        organization = " ".join(normalize("NFKC", raw.organization).casefold().split())
-    application_end = raw.application_end.isoformat() if raw.application_end is not None else ""
+    if organization_value is not None:
+        organization = " ".join(normalize("NFKC", organization_value).casefold().split())
+    application_end = application_end_value.isoformat() if application_end_value is not None else ""
     return f"{title}|{organization}|{application_end}"
