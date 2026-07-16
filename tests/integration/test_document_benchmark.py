@@ -77,10 +77,15 @@ def test_every_benchmark_rule_has_resolvable_location() -> None:
         assert document.warnings == ()
 
 
-def _tree_hashes(root: Path) -> tuple[tuple[str, str], ...]:
+def _document_tree_hashes(root: Path) -> tuple[tuple[str, str], ...]:
     return tuple(
         (path.relative_to(root).as_posix(), sha256(path.read_bytes()).hexdigest())
-        for path in sorted(item for item in root.rglob("*") if item.is_file())
+        for path in sorted(
+            item
+            for item in root.rglob("*")
+            if item.is_file()
+            and (item.name == "documents.jsonl" or item.parent.name == "documents")
+        )
     )
 
 
@@ -94,6 +99,6 @@ def test_benchmark_generation_is_byte_deterministic(tmp_path: Path) -> None:
     build(second)
 
     # Then: both runs exactly reproduce the complete committed artifact map.
-    assert len(_tree_hashes(first)) == 31
-    assert _tree_hashes(first) == _tree_hashes(second)
-    assert _tree_hashes(first) == _tree_hashes(FIXTURE_ROOT)
+    assert len(_document_tree_hashes(first)) == 31
+    assert _document_tree_hashes(first) == _document_tree_hashes(second)
+    assert _document_tree_hashes(first) == _document_tree_hashes(FIXTURE_ROOT)

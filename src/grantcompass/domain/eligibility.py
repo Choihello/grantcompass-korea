@@ -32,6 +32,7 @@ class ApplicantProfile(BaseModel):
         frozen=True,
     )
 
+    id: ApplicantProfileId | None = None
     display_name: str
     founded_on: date | None = None
     regions: tuple[str, ...] = ()
