@@ -102,7 +102,7 @@ def test_non_runtime_evaluator_failure_remains_visible_to_caller() -> None:
     # Then: the orchestration boundary does not broadly swallow the exception.
 
 
-def test_comparable_distinct_sources_promote_conflict() -> None:
+def test_same_direction_numeric_constraints_from_distinct_sources_promote_conflict() -> None:
     # Given: official sources publish different upper limits for the same numeric fact.
     rules = (
         make_rule(RuleValues(RuleKind.BUSINESS_AGE_MONTHS, "lte", 35, source="source-a")),
@@ -130,6 +130,33 @@ def test_comparable_distinct_sources_promote_conflict() -> None:
     assert result.review_status is ReviewStatus.REVIEW_REQUIRED
 
 
+def test_mixed_direction_numeric_constraints_retain_evaluated_precedence() -> None:
+    # Given: independent lower and upper bounds that produce different outcomes.
+    rules = (
+        make_rule(RuleValues(RuleKind.BUSINESS_AGE_MONTHS, "gte", 36, source="source-a")),
+        make_rule(
+            RuleValues(
+                RuleKind.BUSINESS_AGE_MONTHS,
+                "lte",
+                35,
+                rule_id=2,
+                source="source-b",
+                evidence_id=102,
+            )
+        ),
+    )
+
+    # When: a 36-month-old business is assessed.
+    result = DeterministicAssessmentEngine().assess(make_profile(), rules, ASSESSED_AT)
+
+    # Then: opposing directions coexist and UNSATISFIED retains final precedence.
+    assert tuple(item.status for item in result.items) == (
+        ConditionStatus.SATISFIED,
+        ConditionStatus.UNSATISFIED,
+    )
+    assert result.final_status is FinalStatus.INELIGIBLE
+
+
 def test_same_source_outcomes_do_not_promote_conflict() -> None:
     # Given: two comparable limits retained from the same official source identity.
     rules = (
@@ -150,6 +177,77 @@ def test_same_source_outcomes_do_not_promote_conflict() -> None:
     result = DeterministicAssessmentEngine().assess(make_profile(), rules, ASSESSED_AT)
 
     # Then: evidence from one source cannot manufacture an official-source conflict.
+    assert tuple(item.status for item in result.items) == (
+        ConditionStatus.UNSATISFIED,
+        ConditionStatus.SATISFIED,
+    )
+    assert result.final_status is FinalStatus.INELIGIBLE
+
+
+@pytest.mark.parametrize(
+    (
+        "left_document_id",
+        "left_source_url",
+        "right_document_id",
+        "right_source_url",
+    ),
+    [
+        (
+            "shared-document",
+            "https://one.invalid/rule",
+            "shared-document",
+            "https://two.invalid/rule",
+        ),
+        (
+            "document-a",
+            "HTTPS://EXAMPLE.INVALID:443/rule#first",
+            "document-b",
+            "https://example.invalid/rule#second",
+        ),
+        (
+            "document-a",
+            "https://[malformed",
+            "document-b",
+            "https://different.invalid/rule",
+        ),
+    ],
+)
+def test_overlapping_source_identity_does_not_promote_conflict(
+    left_document_id: str,
+    left_source_url: str,
+    right_document_id: str,
+    right_source_url: str,
+) -> None:
+    # Given: contradictory numeric limits whose document or canonical URL identity overlaps.
+    rules = (
+        make_rule(
+            RuleValues(
+                RuleKind.BUSINESS_AGE_MONTHS,
+                "lte",
+                35,
+                source="source-a",
+                document_id=left_document_id,
+                source_url=left_source_url,
+            )
+        ),
+        make_rule(
+            RuleValues(
+                RuleKind.BUSINESS_AGE_MONTHS,
+                "lte",
+                36,
+                rule_id=2,
+                source="source-b",
+                evidence_id=102,
+                document_id=right_document_id,
+                source_url=right_source_url,
+            )
+        ),
+    )
+
+    # When: their raw outcomes disagree.
+    result = DeterministicAssessmentEngine().assess(make_profile(), rules, ASSESSED_AT)
+
+    # Then: either shared identity dimension prevents false cross-source promotion.
     assert tuple(item.status for item in result.items) == (
         ConditionStatus.UNSATISFIED,
         ConditionStatus.SATISFIED,

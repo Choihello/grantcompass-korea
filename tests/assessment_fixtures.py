@@ -44,6 +44,8 @@ class RuleValues:
     required: bool = True
     review_status: ReviewStatus = ReviewStatus.AUTOMATIC
     source: str = "source-a"
+    document_id: str | None = None
+    source_url: str | None = None
     evidence_id: int | None = 101
 
 
@@ -66,9 +68,9 @@ def make_profile(values: ProfileValues = PROFILE_VALUES) -> ApplicantProfile:
 def make_rule(values: RuleValues) -> EligibilityRule:
     evidence = Evidence(
         id=None if values.evidence_id is None else EvidenceId(values.evidence_id),
-        document_id=DocumentId(f"document-{values.source}"),
+        document_id=DocumentId(values.document_id or f"document-{values.source}"),
         block_id=DocumentBlockId(f"block-{values.rule_id}"),
-        source_url=f"https://example.invalid/{values.source}",
+        source_url=values.source_url or f"https://example.invalid/{values.source}",
         page=1,
         section_path="eligibility",
         quote=f"rule-{values.rule_id}",

@@ -1,14 +1,30 @@
 """Conservative promotion of contradictory official rule outcomes."""
 
-from collections.abc import Callable, Sequence
-from dataclasses import replace
-from typing import Final
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from typing import Final, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from grantcompass.domain.eligibility import EligibilityRule, RuleAssessment
 from grantcompass.domain.enums import ConditionStatus, RuleKind
 from grantcompass.rules.evaluation_values import expected_codes, performance_expected
 
-type RuleComparator = Callable[[EligibilityRule, EligibilityRule], bool]
+type NumericDirection = Literal["lower", "upper"]
+
+HTTP_DEFAULT_PORT: Final = 80
+HTTPS_DEFAULT_PORT: Final = 443
+_AGE_RULE_KINDS: Final = frozenset({RuleKind.BUSINESS_AGE_MONTHS, RuleKind.REPRESENTATIVE_AGE})
+_NUMERIC_RULE_KINDS: Final = _AGE_RULE_KINDS | {RuleKind.PERFORMANCE}
+_SET_RULE_KINDS: Final = frozenset({RuleKind.REGION, RuleKind.INDUSTRY, RuleKind.DUPLICATE_BENEFIT})
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictGroupKey:
+    """Typed semantic group whose rules may represent competing constraints."""
+
+    kind: RuleKind
+    direction: NumericDirection | None = None
+    metric_key: str | None = None
 
 
 def promote_conflicts(
@@ -52,33 +68,57 @@ def _contradicts(
 
 
 def _distinct_sources(left: EligibilityRule, right: EligibilityRule) -> bool:
-    left_sources = {(item.document_id, item.source_url) for item in left.evidence}
-    right_sources = {(item.document_id, item.source_url) for item in right.evidence}
-    return left_sources.isdisjoint(right_sources)
+    left_documents = {item.document_id for item in left.evidence}
+    right_documents = {item.document_id for item in right.evidence}
+    left_urls = _canonical_urls(left)
+    right_urls = _canonical_urls(right)
+    return (
+        left_documents.isdisjoint(right_documents)
+        and left_urls is not None
+        and right_urls is not None
+        and left_urls.isdisjoint(right_urls)
+    )
 
 
 def _comparable(left: EligibilityRule, right: EligibilityRule) -> bool:
-    return left.kind is right.kind and _COMPARATORS[left.kind](left, right)
-
-
-def _always_comparable(left: EligibilityRule, right: EligibilityRule) -> bool:
-    del left, right
-    return True
-
-
-def _never_comparable(left: EligibilityRule, right: EligibilityRule) -> bool:
-    del left, right
+    left_group = _conflict_group(left)
+    right_group = _conflict_group(right)
+    if left_group is None or left_group != right_group:
+        return False
+    if left_group.kind in _NUMERIC_RULE_KINDS:
+        return True
+    if left_group.kind in _SET_RULE_KINDS:
+        return _overlapping_codes(left, right)
     return False
 
 
-def _same_performance_metric(left: EligibilityRule, right: EligibilityRule) -> bool:
-    left_expected = performance_expected(left.expected_value)
-    right_expected = performance_expected(right.expected_value)
-    return (
-        left_expected is not None
-        and right_expected is not None
-        and left_expected[0] == right_expected[0]
-    )
+def _conflict_group(rule: EligibilityRule) -> ConflictGroupKey | None:
+    if rule.kind in _AGE_RULE_KINDS:
+        direction = _numeric_direction(rule.operator)
+        return None if direction is None else ConflictGroupKey(kind=rule.kind, direction=direction)
+    if rule.kind is RuleKind.PERFORMANCE:
+        expected = performance_expected(rule.expected_value)
+        direction = _numeric_direction(rule.operator)
+        return (
+            None
+            if expected is None or direction is None
+            else ConflictGroupKey(
+                kind=rule.kind,
+                direction=direction,
+                metric_key=expected[0],
+            )
+        )
+    if rule.kind in _SET_RULE_KINDS:
+        return ConflictGroupKey(kind=rule.kind)
+    return None
+
+
+def _numeric_direction(operator: str) -> NumericDirection | None:
+    if operator in {"gte", "gt"}:
+        return "lower"
+    if operator in {"lte", "lt"}:
+        return "upper"
+    return None
 
 
 def _overlapping_codes(left: EligibilityRule, right: EligibilityRule) -> bool:
@@ -91,12 +131,32 @@ def _overlapping_codes(left: EligibilityRule, right: EligibilityRule) -> bool:
     )
 
 
-_COMPARATORS: Final[dict[RuleKind, RuleComparator]] = {
-    RuleKind.BUSINESS_AGE_MONTHS: _always_comparable,
-    RuleKind.REGION: _overlapping_codes,
-    RuleKind.REPRESENTATIVE_AGE: _always_comparable,
-    RuleKind.INDUSTRY: _overlapping_codes,
-    RuleKind.PERFORMANCE: _same_performance_metric,
-    RuleKind.DUPLICATE_BENEFIT: _overlapping_codes,
-    RuleKind.NATURAL_LANGUAGE: _never_comparable,
-}
+def _canonical_urls(rule: EligibilityRule) -> frozenset[str] | None:
+    urls: set[str] = set()
+    for evidence in rule.evidence:
+        canonical = _canonical_url(evidence.source_url)
+        if canonical is None:
+            return None
+        urls.add(canonical)
+    return frozenset(urls)
+
+
+def _canonical_url(value: str) -> str | None:
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.casefold()
+    hostname = parsed.hostname
+    if scheme not in {"http", "https"} or hostname is None:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    host = hostname.casefold()
+    rendered_host = f"[{host}]" if ":" in host else host
+    default_port = (scheme == "http" and port == HTTP_DEFAULT_PORT) or (
+        scheme == "https" and port == HTTPS_DEFAULT_PORT
+    )
+    netloc = rendered_host if port is None or default_port else f"{rendered_host}:{port}"
+    return urlunsplit((scheme, netloc, parsed.path, parsed.query, ""))

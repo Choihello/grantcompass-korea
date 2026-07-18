@@ -190,5 +190,8 @@ def _evaluate_code_set(
         return unknown("malformed_expected_value")
     if rule.operator not in _SET_OPERATORS:
         return unknown("unsupported_operator")
-    overlap = bool({normalized_code(value) for value in facts}.intersection(expected))
+    normalized_facts = tuple(normalized_code(value) for value in facts)
+    if any(not value for value in normalized_facts):
+        return unknown("malformed_profile_fact")
+    overlap = bool(set(normalized_facts).intersection(expected))
     return satisfied(value=overlap if rule.operator == "in" else not overlap)

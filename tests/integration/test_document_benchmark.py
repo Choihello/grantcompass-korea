@@ -84,9 +84,23 @@ def _document_tree_hashes(root: Path) -> tuple[tuple[str, str], ...]:
             item
             for item in root.rglob("*")
             if item.is_file()
-            and (item.name == "documents.jsonl" or item.parent.name == "documents")
+            and (item == root / "documents.jsonl" or item.relative_to(root).parts[0] == "documents")
         )
     )
+
+
+def test_document_tree_hashes_own_nested_document_artifacts(tmp_path: Path) -> None:
+    # Given: one nested document artifact and one unrelated benchmark manifest.
+    nested = tmp_path / "documents" / "nested" / "artifact.bin"
+    _ = nested.parent.mkdir(parents=True)
+    _ = nested.write_bytes(b"owned")
+    _ = (tmp_path / "assessments.jsonl").write_text("unrelated", encoding="utf-8")
+
+    # When: Task 8 artifact ownership hashes the fixture root.
+    hashes = _document_tree_hashes(tmp_path)
+
+    # Then: documents/** is owned by first relative component and unrelated files are excluded.
+    assert tuple(path for path, _digest in hashes) == ("documents/nested/artifact.bin",)
 
 
 def test_benchmark_generation_is_byte_deterministic(tmp_path: Path) -> None:

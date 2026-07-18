@@ -194,3 +194,38 @@ def test_missing_profile_facts_remain_unknown(
     # Then: absence is explicit rather than guessed.
     assert item.status is ConditionStatus.UNKNOWN
     assert item.error_id == "missing_profile_fact"
+
+
+@pytest.mark.parametrize(
+    ("profile", "rule"),
+    [
+        (
+            make_profile(replace(PROFILE_VALUES, regions=("   ",))),
+            RuleValues(RuleKind.REGION, "in", "KR-11"),
+        ),
+        (
+            make_profile(replace(PROFILE_VALUES, regions=("KR-11", "  "))),
+            RuleValues(RuleKind.REGION, "in", "KR-11"),
+        ),
+        (
+            make_profile(replace(PROFILE_VALUES, industries=("\t",))),
+            RuleValues(RuleKind.INDUSTRY, "not_in", "KSIC-J62"),
+        ),
+        (
+            make_profile(replace(PROFILE_VALUES, industries=("KSIC-J62", "\n"))),
+            RuleValues(RuleKind.INDUSTRY, "in", "KSIC-J62"),
+        ),
+    ],
+)
+def test_malformed_region_and_industry_facts_remain_unknown(
+    profile: ApplicantProfile,
+    rule: RuleValues,
+) -> None:
+    # Given: a nonempty code tuple containing at least one malformed normalized member.
+
+    # When: the set-valued fact is assessed.
+    item = DeterministicAssessmentEngine().assess(profile, (make_rule(rule),), ASSESSED_AT).items[0]
+
+    # Then: no valid sibling can hide malformed profile input.
+    assert item.status is ConditionStatus.UNKNOWN
+    assert item.error_id == "malformed_profile_fact"

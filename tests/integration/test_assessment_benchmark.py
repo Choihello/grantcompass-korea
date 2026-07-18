@@ -6,7 +6,12 @@ from grantcompass.domain.eligibility import (
     AssessmentResult,
     EligibilityRule,
 )
-from grantcompass.domain.enums import ConditionStatus, RuleKind
+from grantcompass.domain.enums import (
+    ConditionStatus,
+    FinalStatus,
+    ReviewStatus,
+    RuleKind,
+)
 from grantcompass.rules.assessment_benchmark import AssessmentBenchmarkCase, load_assessment_cases
 from grantcompass.rules.deterministic import (
     DeterministicAssessmentEngine,
@@ -71,12 +76,16 @@ def test_benchmark_covers_every_required_assessment_class() -> None:
     kinds = {rule.kind for case in cases for rule in case.rules}
     operators = {rule.operator for case in cases for rule in case.rules}
     statuses = {item.status for case in cases for item in case.expected_items}
+    final_statuses = {case.expected_final_status for case in cases}
+    review_statuses = {case.expected_review_status for case in cases}
     features = {feature for case in cases for feature in case.coverage}
 
     # Then: every supported and review-sensitive class is present.
     assert kinds == set(RuleKind)
     assert operators == {"lte", "lt", "gte", "gt", "in", "not_in", "contains"}
     assert statuses == set(ConditionStatus)
+    assert final_statuses == set(FinalStatus)
+    assert review_statuses == {ReviewStatus.AUTOMATIC, ReviewStatus.REVIEW_REQUIRED}
     assert {
         "boundary",
         "missing_fact",
@@ -90,3 +99,29 @@ def test_benchmark_covers_every_required_assessment_class() -> None:
         "leap_day",
         "end_of_month",
     }.issubset(features)
+
+
+def test_benchmark_contains_golden_malformed_region_and_industry_facts() -> None:
+    # Given: the parsed golden benchmark cases.
+    cases = load_assessment_cases(MANIFEST_PATH)
+
+    # When: malformed code-set facts with matching visible outcomes are identified.
+    malformed_kinds = {
+        rule.kind
+        for case in cases
+        for rule, expected in zip(case.rules, case.expected_items, strict=True)
+        if expected.error_id == "malformed_profile_fact"
+        and (
+            (
+                rule.kind is RuleKind.REGION
+                and any(not value.strip() for value in case.profile.regions)
+            )
+            or (
+                rule.kind is RuleKind.INDUSTRY
+                and any(not value.strip() for value in case.profile.industries)
+            )
+        )
+    }
+
+    # Then: both normalized set-valued profile facts have literal golden coverage.
+    assert malformed_kinds == {RuleKind.REGION, RuleKind.INDUSTRY}
