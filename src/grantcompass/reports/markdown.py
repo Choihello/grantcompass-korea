@@ -103,10 +103,7 @@ def _program_section(
     context: ReportProgramContext,
 ) -> list[str]:
     assessment = match.assessment
-    reassessment_required = str(
-        bool(context.impact)
-        or (context.roadmap.reassessment_required if context.roadmap else False)
-    ).lower()
+    reassessment_required = str(context.impact is not None).lower()
     lines = [
         "",
         f"## program {int(match.program.id)} - {escape_markdown(match.program.title)}",
@@ -203,12 +200,9 @@ def _roadmap_sections(
                 ",".join(str(value) for value in item.evidence_ids) or "none",
             )
         )
-    change_impact = roadmap.change_impact if roadmap.change_impact is not None else impact
-    if change_impact is not None:
-        changed_fields = ",".join(escape_markdown(value) for value in change_impact.changed_fields)
-        impacted_assessments = ",".join(
-            str(value) for value in change_impact.impacted_assessment_ids
-        )
+    if impact is not None:
+        changed_fields = ",".join(escape_markdown(value) for value in impact.changed_fields)
+        impacted_assessments = ",".join(str(value) for value in impact.impacted_assessment_ids)
         lines.append(
             f"- change_impact: fields={changed_fields} | assessment_ids={impacted_assessments}"
         )

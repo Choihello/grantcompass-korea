@@ -12,6 +12,14 @@ from grantcompass.reports.markdown import render_markdown_report
 from tests.unit.test_markdown_report import make_input
 
 
+def _impact() -> ChangeImpact:
+    return ChangeImpact(
+        program_id=ProgramId(3),
+        changed_fields=("application_end",),
+        impacted_assessment_ids=(AssessmentId(300),),
+    )
+
+
 def test_report_rejects_cross_program_impact_assessment_reference() -> None:
     base = make_input()
     second_program = Program(
@@ -101,6 +109,34 @@ def test_report_rejects_inconsistent_impact_copies() -> None:
         roadmaps=(roadmap,),
         change_impacts=(conflicting,),
     )
+
+    with pytest.raises(MatchingInputError) as error:
+        _ = render_markdown_report(report_input)
+    assert error.value.code == "inconsistent_change_impact"
+
+
+def test_report_rejects_report_only_impact_without_canonical_match_impact() -> None:
+    report_input = replace(make_input(), change_impacts=(_impact(),))
+
+    with pytest.raises(MatchingInputError) as error:
+        _ = render_markdown_report(report_input)
+    assert error.value.code == "inconsistent_change_impact"
+
+
+def test_report_rejects_roadmap_only_impact_without_canonical_match_impact() -> None:
+    base = make_input()
+    roadmap = build_roadmap(base.matches[0], (_impact(),))
+    report_input = replace(base, roadmaps=(roadmap,))
+
+    with pytest.raises(MatchingInputError) as error:
+        _ = render_markdown_report(report_input)
+    assert error.value.code == "inconsistent_change_impact"
+
+
+def test_report_rejects_bare_roadmap_reassessment_flag_without_canonical_impact() -> None:
+    base = make_input()
+    roadmap = replace(base.roadmaps[0], reassessment_required=True)
+    report_input = replace(base, roadmaps=(roadmap,))
 
     with pytest.raises(MatchingInputError) as error:
         _ = render_markdown_report(report_input)

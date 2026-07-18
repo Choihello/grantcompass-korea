@@ -111,12 +111,15 @@ def _canonical_impact(
     report_impact: ChangeImpact | None,
 ) -> ChangeImpact | None:
     roadmap_impact = None if roadmap is None else roadmap.change_impact
-    candidates = tuple(
-        impact
-        for impact in (match.change_impact, roadmap_impact, report_impact)
-        if impact is not None
-    )
-    if candidates and any(impact != candidates[0] for impact in candidates[1:]):
+    canonical = validate_change_impacts(match, ())
+    if roadmap_impact is not None:
+        _ = validate_change_impacts(match, (roadmap_impact,))
+    if report_impact is not None:
+        _ = validate_change_impacts(match, (report_impact,))
+    if roadmap_impact is not None and roadmap_impact != canonical:
         raise MatchingInputError(_INCONSISTENT_IMPACT)
-    canonical = candidates[0] if candidates else None
-    return validate_change_impacts(match, () if canonical is None else (canonical,))
+    if report_impact is not None and report_impact != canonical:
+        raise MatchingInputError(_INCONSISTENT_IMPACT)
+    if roadmap is not None and roadmap.reassessment_required != (canonical is not None):
+        raise MatchingInputError(_INCONSISTENT_IMPACT)
+    return canonical

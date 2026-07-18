@@ -169,3 +169,21 @@ def test_report_orders_programs_and_evidence_stably() -> None:
     assert first == second
     assert first.index("## program 3") < first.index("## program 4")
     assert first.index("evidence_id: 30") < first.index("evidence_id: 40")
+
+
+def test_report_orders_multiple_evidence_items_within_one_program() -> None:
+    base = make_input()
+    second_evidence = replace(
+        base.evidence[0],
+        id=EvidenceId(31),
+        document_id=DocumentId("doc-31"),
+        block_id=DocumentBlockId("p-31"),
+    )
+    first_order = replace(base, evidence=(second_evidence, base.evidence[0]))
+    second_order = replace(base, evidence=(base.evidence[0], second_evidence))
+
+    first = render_markdown_report(first_order)
+    second = render_markdown_report(second_order)
+
+    assert first == second
+    assert first.index("evidence_id: 30") < first.index("evidence_id: 31")
