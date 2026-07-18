@@ -110,6 +110,8 @@ def test_valid_canonical_source_forms_do_not_establish_source_independence(
 @pytest.mark.parametrize(
     "invalid_source_url",
     [
+        "htt%70://example.invalid/rule",
+        "https://example.invalid:%34%34%33/rule",
         "https://-example.invalid/rule",
         "https://999.0.0.1/rule",
         "https://[2001:db8::gg]/rule",

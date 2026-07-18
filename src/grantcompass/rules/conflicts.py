@@ -2,24 +2,15 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from ipaddress import AddressValueError, IPv4Address, IPv6Address
 from typing import Final, Literal
-from urllib.parse import urlsplit, urlunsplit
 
 from grantcompass.domain.eligibility import EligibilityRule, RuleAssessment
 from grantcompass.domain.enums import ConditionStatus, RuleKind
 from grantcompass.rules.evaluation_values import expected_codes, performance_expected
+from grantcompass.rules.source_urls import canonical_http_url as _canonical_url
 
 type NumericDirection = Literal["lower", "upper"]
 
-HTTP_DEFAULT_PORT: Final = 80
-HTTPS_DEFAULT_PORT: Final = 443
-_ASCII_SPACE: Final = 32
-_ASCII_DELETE: Final = 127
-_MAX_DNS_HOST_LENGTH: Final = 253
-_MAX_DNS_LABEL_LENGTH: Final = 63
-_HEX_DIGITS: Final = frozenset("0123456789abcdefABCDEF")
-_UNRESERVED: Final = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 _AGE_RULE_KINDS: Final = frozenset({RuleKind.BUSINESS_AGE_MONTHS, RuleKind.REPRESENTATIVE_AGE})
 _NUMERIC_RULE_KINDS: Final = _AGE_RULE_KINDS | {RuleKind.PERFORMANCE}
 _SET_RULE_KINDS: Final = frozenset({RuleKind.REGION, RuleKind.INDUSTRY, RuleKind.DUPLICATE_BENEFIT})
@@ -146,108 +137,3 @@ def _canonical_urls(rule: EligibilityRule) -> frozenset[str] | None:
             return None
         urls.add(canonical)
     return frozenset(urls)
-
-
-def _canonical_url(value: str) -> str | None:
-    normalized_value = None if _has_forbidden_ascii(value) else _normalize_percent_encoding(value)
-    if normalized_value is None:
-        return None
-    try:
-        parsed = urlsplit(normalized_value)
-        port = parsed.port
-    except ValueError:
-        return None
-    scheme = parsed.scheme.casefold()
-    hostname = parsed.hostname
-    if scheme not in {"http", "https"} or hostname is None:
-        return None
-    if parsed.username is not None or parsed.password is not None:
-        return None
-    canonical_host = _canonical_host(hostname)
-    if canonical_host is None:
-        return None
-    host, is_ipv6 = canonical_host
-    rendered_host = f"[{host}]" if is_ipv6 else host
-    default_port = (scheme == "http" and port == HTTP_DEFAULT_PORT) or (
-        scheme == "https" and port == HTTPS_DEFAULT_PORT
-    )
-    netloc = rendered_host if port is None or default_port else f"{rendered_host}:{port}"
-    return urlunsplit((scheme, netloc, parsed.path or "/", parsed.query, ""))
-
-
-def _has_forbidden_ascii(value: str) -> bool:
-    return any(
-        ord(character) <= _ASCII_SPACE or ord(character) == _ASCII_DELETE for character in value
-    )
-
-
-def _normalize_percent_encoding(value: str) -> str | None:
-    normalized: list[str] = []
-    index = 0
-    while index < len(value):
-        character = value[index]
-        if character != "%":
-            normalized.append(character)
-            index += 1
-            continue
-        if (
-            index + 2 >= len(value)
-            or value[index + 1] not in _HEX_DIGITS
-            or value[index + 2] not in _HEX_DIGITS
-        ):
-            return None
-        escape = value[index + 1 : index + 3]
-        decoded = chr(int(escape, 16))
-        normalized.append(decoded if decoded in _UNRESERVED else f"%{escape.upper()}")
-        index += 3
-    return "".join(normalized)
-
-
-def _canonical_host(hostname: str) -> tuple[str, bool] | None:
-    if ":" in hostname:
-        return _canonical_ipv6_host(hostname)
-    if "." in hostname and all(character in "0123456789." for character in hostname):
-        return _canonical_ipv4_host(hostname)
-    return _canonical_dns_host(hostname)
-
-
-def _canonical_ipv6_host(hostname: str) -> tuple[str, bool] | None:
-    try:
-        return IPv6Address(hostname).compressed.casefold(), True
-    except AddressValueError:
-        return None
-
-
-def _canonical_ipv4_host(hostname: str) -> tuple[str, bool] | None:
-    try:
-        return str(IPv4Address(hostname)), False
-    except AddressValueError:
-        return None
-
-
-def _canonical_dns_host(hostname: str) -> tuple[str, bool] | None:
-    try:
-        ascii_host = hostname.encode("idna").decode("ascii").casefold()
-    except UnicodeError:
-        return None
-    host = ascii_host.removesuffix(".")
-    if not host or len(host) > _MAX_DNS_HOST_LENGTH:
-        return None
-    if not all(_is_valid_dns_label(label) for label in host.split(".")):
-        return None
-    return host, False
-
-
-def _is_valid_dns_label(label: str) -> bool:
-    if not label or len(label) > _MAX_DNS_LABEL_LENGTH:
-        return False
-    if not label[0].isalnum() or not label[-1].isalnum():
-        return False
-    if not all(character.isalnum() or character == "-" for character in label):
-        return False
-    if label.startswith("xn--"):
-        try:
-            _ = label.encode("ascii").decode("idna")
-        except UnicodeError:
-            return False
-    return True
