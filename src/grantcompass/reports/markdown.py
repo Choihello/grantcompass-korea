@@ -2,13 +2,17 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from grantcompass.domain.documents import Evidence, EvidenceId
 from grantcompass.domain.eligibility import ApplicantProfile, RuleAssessment
 from grantcompass.domain.enums import ConditionStatus, FreshnessStatus, SourceName
 from grantcompass.matching.forward import ChangeImpact, ProgramMatch
 from grantcompass.matching.roadmap import ProgramRoadmap
+from grantcompass.reports.impact_validation import (
+    ReportProgramContext,
+    validate_report_inputs,
+)
 from grantcompass.reports.markdown_helpers import (
     bounded_quote,
     escape_markdown,
@@ -16,18 +20,13 @@ from grantcompass.reports.markdown_helpers import (
     valid_source_url,
 )
 
-if TYPE_CHECKING:
-    from grantcompass.domain.ids import ProgramId
-
 __all__ = ["ReportInput", "SourceFreshness", "render_markdown_report"]
 
 _MISSING_EVIDENCE: Final = "missing_evidence"
 _VERIFY_MISSING_EVIDENCE: Final = "verify_missing_evidence"
 _INVALID_SOURCE_URL: Final = "invalid_source_url"
 _DUPLICATE_EVIDENCE: Final = "duplicate_evidence_id"
-_DUPLICATE_IMPACT: Final = "duplicate_change_impact"
 _UNKNOWN_IMPACT_PROGRAM: Final = "unknown_impact_program_id"
-_UNKNOWN_IMPACT_ASSESSMENT: Final = "unknown_impact_assessment_id"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,40 +51,27 @@ class ReportInput:
     change_impacts: tuple[ChangeImpact, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class _ProgramReportContext:
-    roadmap: ProgramRoadmap | None
-    impact: ChangeImpact | None
-    evidence_by_id: dict[EvidenceId, Evidence]
-    duplicate_ids: frozenset[EvidenceId]
-
-
 def render_markdown_report(report_input: ReportInput) -> str:
     """Render byte-stable UTF-8 Markdown without reading the system clock."""
     evidence_by_id, duplicate_ids = evidence_index(report_input.evidence)
-    roadmaps = {roadmap.program_id: roadmap for roadmap in report_input.roadmaps}
+    validated = validate_report_inputs(
+        report_input.matches,
+        report_input.roadmaps,
+        report_input.change_impacts,
+    )
     lines = _header(report_input)
-    for match in sorted(report_input.matches, key=lambda value: int(value.program.id)):
-        impact = next(
-            (
-                value
-                for value in report_input.change_impacts
-                if value.program_id == match.program.id
-            ),
-            None,
-        )
+    for program_input in sorted(validated, key=lambda value: int(value.match.program.id)):
         lines.extend(
             _program_section(
-                match,
-                _ProgramReportContext(
-                    roadmap=roadmaps.get(match.program.id),
-                    impact=impact,
+                program_input.match,
+                ReportProgramContext(
+                    roadmap=program_input.roadmap,
+                    impact=program_input.impact,
                     evidence_by_id=evidence_by_id,
                     duplicate_ids=duplicate_ids,
                 ),
             )
         )
-    lines.extend(_impact_errors(report_input))
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -114,7 +100,7 @@ def _header(report_input: ReportInput) -> list[str]:
 
 def _program_section(
     match: ProgramMatch,
-    context: _ProgramReportContext,
+    context: ReportProgramContext,
 ) -> list[str]:
     assessment = match.assessment
     reassessment_required = str(
@@ -226,27 +212,6 @@ def _roadmap_sections(
         lines.append(
             f"- change_impact: fields={changed_fields} | assessment_ids={impacted_assessments}"
         )
-    return lines
-
-
-def _impact_errors(report_input: ReportInput) -> list[str]:
-    known_programs = {match.program.id for match in report_input.matches}
-    known_assessments = {
-        match.assessment.id for match in report_input.matches if match.assessment.id is not None
-    }
-    lines: list[str] = []
-    seen_programs: set[ProgramId] = set()
-    for impact in report_input.change_impacts:
-        if impact.program_id in seen_programs:
-            lines.append(f"input_error: {_DUPLICATE_IMPACT}")
-        seen_programs.add(impact.program_id)
-        if impact.program_id not in known_programs:
-            lines.append(f"input_error: {_UNKNOWN_IMPACT_PROGRAM}")
-        if not impact.impacted_assessment_ids or any(
-            assessment_id not in known_assessments
-            for assessment_id in impact.impacted_assessment_ids
-        ):
-            lines.append(f"input_error: {_UNKNOWN_IMPACT_ASSESSMENT}")
     return lines
 
 

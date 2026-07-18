@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum, unique
-from typing import ClassVar, Final, Literal, override
+from typing import ClassVar, Final, Literal, assert_never, override
 
 from grantcompass.domain.eligibility import AssessmentResult
 from grantcompass.domain.enums import FinalStatus
@@ -26,22 +26,22 @@ type MatchingInputErrorCode = Literal[
     "duplicate_assessment_program_id",
     "mismatched_program_ids",
     "duplicate_change_impact",
+    "inconsistent_change_impact",
     "unknown_impact_program_id",
     "unknown_impact_assessment_id",
+    "duplicate_roadmap_program_id",
+    "unknown_roadmap_program_id",
 ]
 
 _DUPLICATE_PROGRAM_ID: Final[MatchingInputErrorCode] = "duplicate_program_id"
 _DUPLICATE_ASSESSMENT_PROGRAM_ID: Final[MatchingInputErrorCode] = "duplicate_assessment_program_id"
 _MISMATCHED_PROGRAM_IDS: Final[MatchingInputErrorCode] = "mismatched_program_ids"
 _DUPLICATE_CHANGE_IMPACT: Final[MatchingInputErrorCode] = "duplicate_change_impact"
+_INCONSISTENT_CHANGE_IMPACT: Final[MatchingInputErrorCode] = "inconsistent_change_impact"
 _UNKNOWN_IMPACT_PROGRAM_ID: Final[MatchingInputErrorCode] = "unknown_impact_program_id"
 _UNKNOWN_IMPACT_ASSESSMENT_ID: Final[MatchingInputErrorCode] = "unknown_impact_assessment_id"
-_STATUS_RANKS: Final[dict[FinalStatus, int]] = {
-    FinalStatus.ELIGIBLE: 0,
-    FinalStatus.CONDITIONAL: 1,
-    FinalStatus.NEEDS_REVIEW: 2,
-    FinalStatus.INELIGIBLE: 3,
-}
+_DUPLICATE_ROADMAP_PROGRAM_ID: Final[MatchingInputErrorCode] = "duplicate_roadmap_program_id"
+_UNKNOWN_ROADMAP_PROGRAM_ID: Final[MatchingInputErrorCode] = "unknown_roadmap_program_id"
 
 
 @unique
@@ -51,13 +51,6 @@ class DeadlineState(StrEnum):
     OPEN = "open"
     MISSING = "missing"
     EXPIRED = "expired"
-
-
-_DEADLINE_RANKS: Final[dict[DeadlineState, int]] = {
-    DeadlineState.OPEN: 0,
-    DeadlineState.MISSING: 1,
-    DeadlineState.EXPIRED: 2,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,9 +126,14 @@ def validate_change_impacts(
     """Resolve one matching change impact or raise a finite input error."""
     if len(impacts) > 1:
         raise MatchingInputError(_DUPLICATE_CHANGE_IMPACT)
-    if not impacts:
+    impact = match.change_impact
+    if impacts:
+        supplied_impact = impacts[0]
+        if impact is not None and impact != supplied_impact:
+            raise MatchingInputError(_INCONSISTENT_CHANGE_IMPACT)
+        impact = supplied_impact
+    if impact is None:
         return None
-    impact = impacts[0]
     if impact.program_id != match.program.id:
         raise MatchingInputError(_UNKNOWN_IMPACT_PROGRAM_ID)
     assessment_id = match.assessment.id
@@ -189,14 +187,36 @@ def _ranking_key(match: ProgramMatch) -> tuple[int, int, int, int]:
 
 
 def _status_rank(status: FinalStatus) -> int:
-    return _STATUS_RANKS[status]
+    match status:
+        case FinalStatus.ELIGIBLE:
+            return 0
+        case FinalStatus.CONDITIONAL:
+            return 1
+        case FinalStatus.NEEDS_REVIEW:
+            return 2
+        case FinalStatus.INELIGIBLE:
+            return 3
+        case _:
+            assert_never(status)
 
 
 def _deadline_rank(state: DeadlineState) -> int:
-    return _DEADLINE_RANKS[state]
+    match state:
+        case DeadlineState.OPEN:
+            return 0
+        case DeadlineState.MISSING:
+            return 1
+        case DeadlineState.EXPIRED:
+            return 2
+        case _:
+            assert_never(state)
 
 
 def _deadline_days(deadline: Deadline) -> int:
-    if deadline.state is DeadlineState.OPEN and deadline.days_remaining is not None:
-        return deadline.days_remaining
-    return 0
+    match deadline.state:
+        case DeadlineState.OPEN:
+            return 0 if deadline.days_remaining is None else deadline.days_remaining
+        case DeadlineState.MISSING | DeadlineState.EXPIRED:
+            return 0
+        case _:
+            assert_never(deadline.state)

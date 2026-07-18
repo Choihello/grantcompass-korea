@@ -21,12 +21,6 @@ _VERIFY_UNKNOWN: Final = "verify_unknown"
 _VERIFY_CONFLICT: Final = "verify_conflict"
 _ASSESSMENT_NEEDS_REVIEW: Final = "assessment_needs_review"
 _SATISFY_CONDITION: Final = "satisfy_condition"
-_ROADMAP_MODES: Final[dict[FinalStatus, str]] = {
-    FinalStatus.CONDITIONAL: "conditional",
-    FinalStatus.NEEDS_REVIEW: "needs_review",
-    FinalStatus.ELIGIBLE: "none",
-    FinalStatus.INELIGIBLE: "none",
-}
 
 
 @unique
@@ -80,15 +74,20 @@ def build_roadmap(
 
 def _roadmap_items(match: ProgramMatch) -> tuple[RoadmapItem, ...]:
     status = match.assessment.final_status
-    mode = _ROADMAP_MODES[status]
-    items = _condition_items(match)
-    if mode == "conditional":
-        return items
-    if mode == "needs_review":
-        if items and any(item.kind is RoadmapItemKind.QUESTION for item in items):
-            return items
-        return (*items, _assessment_question(match.program.id))
-    return tuple(item for item in items if item.kind is RoadmapItemKind.QUESTION)
+    match status:
+        case FinalStatus.CONDITIONAL:
+            return _condition_items(match)
+        case FinalStatus.NEEDS_REVIEW:
+            items = _condition_items(match)
+            if items and any(item.kind is RoadmapItemKind.QUESTION for item in items):
+                return items
+            return (*items, _assessment_question(match.program.id))
+        case FinalStatus.ELIGIBLE | FinalStatus.INELIGIBLE:
+            return tuple(
+                item for item in _condition_items(match) if item.kind is RoadmapItemKind.QUESTION
+            )
+        case _:
+            assert_never(status)
 
 
 def _condition_items(match: ProgramMatch) -> tuple[RoadmapItem, ...]:

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pytest
@@ -120,3 +121,23 @@ def test_change_impact_references_are_not_silently_ignored() -> None:
 
     with pytest.raises(MatchingInputError):
         _ = build_roadmap(match, (impact,))
+
+
+def test_match_impact_is_canonical_and_legacy_copy_must_match() -> None:
+    assessment = make_assessment(FinalStatus.ELIGIBLE, ())
+    impact = ChangeImpact(
+        program_id=ProgramId(7),
+        changed_fields=("title",),
+        impacted_assessment_ids=(AssessmentId(7),),
+    )
+    match = rank_programs((assessment,), (make_program(7),), date(2026, 7, 15))[0]
+    canonical_match = replace(match, change_impact=impact)
+
+    roadmap = build_roadmap(canonical_match)
+
+    assert roadmap.change_impact == impact
+    assert roadmap.reassessment_required is True
+    conflicting = replace(impact, changed_fields=("application_end",))
+    with pytest.raises(MatchingInputError) as error:
+        _ = build_roadmap(canonical_match, (conflicting,))
+    assert error.value.code == "inconsistent_change_impact"

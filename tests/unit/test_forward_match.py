@@ -91,7 +91,7 @@ def test_rank_is_invariant_to_input_permutation_and_status_buckets() -> None:
         make_program(2, date(2026, 3, 2)),
     )
     assessments = (
-        make_assessment(10, FinalStatus.CONDITIONAL, 110),
+        make_assessment(10, FinalStatus.ELIGIBLE, 110),
         make_assessment(2, FinalStatus.ELIGIBLE, 102),
     )
     first = rank_programs(assessments, programs, date(2026, 2, 27))
@@ -116,3 +116,51 @@ def test_rank_rejects_duplicate_and_mismatched_id_sets() -> None:
     with pytest.raises(MatchingInputError) as mismatch_error:
         _ = rank_programs(one_assessment, (make_program(2, None),), date(2026, 2, 27))
     assert mismatch_error.value.code == "mismatched_program_ids"
+
+
+def test_rank_orders_all_status_buckets_and_handles_leap_day_deadlines() -> None:
+    programs = tuple(make_program(index, date(2028, 2, 29)) for index in range(1, 5))
+    assessments = tuple(
+        make_assessment(
+            index,
+            status,
+            100 + index,
+        )
+        for index, status in enumerate(
+            (
+                FinalStatus.ELIGIBLE,
+                FinalStatus.CONDITIONAL,
+                FinalStatus.NEEDS_REVIEW,
+                FinalStatus.INELIGIBLE,
+            ),
+            start=1,
+        )
+    )
+
+    ranked = rank_programs(assessments, programs, date(2028, 2, 28))
+
+    assert tuple(item.assessment.final_status for item in ranked) == (
+        FinalStatus.ELIGIBLE,
+        FinalStatus.CONDITIONAL,
+        FinalStatus.NEEDS_REVIEW,
+        FinalStatus.INELIGIBLE,
+    )
+    assert ranked[0].deadline.date == date(2028, 2, 29)
+    assert ranked[0].deadline.days_remaining == 1
+    expired = rank_programs(
+        (assessments[0],),
+        (programs[0],),
+        date(2028, 3, 1),
+    )[0]
+    assert expired.deadline.state is DeadlineState.EXPIRED
+
+
+def test_rank_rejects_duplicate_assessment_program_ids() -> None:
+    assessments = (
+        make_assessment(1, FinalStatus.ELIGIBLE, 101),
+        make_assessment(1, FinalStatus.CONDITIONAL, 102),
+    )
+
+    with pytest.raises(MatchingInputError) as error:
+        _ = rank_programs(assessments, (make_program(1, None),), date(2026, 2, 27))
+    assert error.value.code == "duplicate_assessment_program_id"

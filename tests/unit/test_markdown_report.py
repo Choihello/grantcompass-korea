@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 from grantcompass.domain.documents import DocumentBlockId, DocumentId, Evidence, EvidenceId
@@ -35,7 +36,12 @@ def make_program() -> Program:
     )
 
 
-def make_input(*, include_evidence: bool = True, invalid_url: bool = False) -> ReportInput:
+def make_input(
+    *,
+    include_evidence: bool = True,
+    invalid_url: bool = False,
+    html_payload: bool = False,
+) -> ReportInput:
     evidence = Evidence(
         id=EvidenceId(30),
         document_id=DocumentId("doc-3"),
@@ -70,7 +76,12 @@ def make_input(*, include_evidence: bool = True, invalid_url: bool = False) -> R
     matches = rank_programs((assessment,), (program,), date(2026, 7, 15))
     roadmap = build_roadmap(matches[0])
     return ReportInput(
-        profile=ApplicantProfile(id=ApplicantProfileId(7), display_name="기업 | <대표>"),
+        profile=ApplicantProfile(
+            id=ApplicantProfileId(7),
+            display_name=(
+                "<script>alert(1)</script> | [대표]" if html_payload else "기업 | <대표>"
+            ),
+        ),
         matches=matches,
         roadmaps=(roadmap,),
         evidence=(evidence,) if include_evidence else (),
@@ -115,10 +126,46 @@ def test_report_is_deterministic_and_includes_provenance_freshness_and_review_st
 
 
 def test_report_marks_missing_and_invalid_sources_without_raw_html_or_unbounded_quotes() -> None:
-    report_input = make_input(invalid_url=True)
+    report_input = make_input(invalid_url=True, html_payload=True)
     report = render_markdown_report(report_input)
 
     assert "missing_evidence" in report
     assert "invalid_source_url" in report
     assert "<script>" not in report
+    assert "</script>" not in report
     assert "가" * 161 not in report
+
+
+def test_report_orders_programs_and_evidence_stably() -> None:
+    base = make_input()
+    second_program = replace(base.matches[0].program, id=ProgramId(4), title="사업 4")
+    second_assessment = replace(
+        base.matches[0].assessment,
+        id=AssessmentId(400),
+        program_id=ProgramId(4),
+        items=(replace(base.matches[0].assessment.items[0], evidence_ids=(EvidenceId(40),)),),
+    )
+    matches = rank_programs(
+        (second_assessment, base.matches[0].assessment),
+        (second_program, base.matches[0].program),
+        date(2026, 7, 15),
+    )
+    second_evidence = replace(
+        base.evidence[0],
+        id=EvidenceId(40),
+        document_id=DocumentId("doc-4"),
+        block_id=DocumentBlockId("p-40"),
+    )
+    report_input = replace(
+        base,
+        matches=matches,
+        roadmaps=tuple(build_roadmap(match) for match in matches),
+        evidence=(second_evidence, base.evidence[0]),
+    )
+
+    first = render_markdown_report(report_input)
+    second = render_markdown_report(report_input)
+
+    assert first == second
+    assert first.index("## program 3") < first.index("## program 4")
+    assert first.index("evidence_id: 30") < first.index("evidence_id: 40")
