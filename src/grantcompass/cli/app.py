@@ -156,7 +156,7 @@ def _emit(
     json_output: bool,
 ) -> None:
     if json_output:
-        typer.echo(output.model_dump_json())
+        typer.echo(output.model_dump_json().encode("utf-8"))
         return
     for line in human_lines:
         typer.echo(line)

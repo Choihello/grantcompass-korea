@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import anyio
@@ -49,6 +52,61 @@ def test_search_flow_is_reproducible_against_real_sqlite(tmp_path: Path) -> None
 
     # Then
     _assert_search_results(first_search, second_search)
+
+
+def test_installed_search_json_is_utf8_and_single_document(tmp_path: Path) -> None:
+    # Given
+    database_path = tmp_path / "installed.db"
+    database_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    runner = CliRunner()
+    app = create_app(make_dependencies(database_url))
+    assert runner.invoke(app, ["db", "init"]).exit_code == 0
+    created = runner.invoke(
+        app,
+        [
+            "profile",
+            "create",
+            "--name",
+            "한국 테스트기업",
+            "--region",
+            "서울",
+            "--industry",
+            "소프트웨어",
+            "--json",
+        ],
+    )
+    assert created.exit_code == 0
+    anyio.run(seed_search_fixture, database_url)
+    stdout_path = tmp_path / "search.json"
+    executable_name = "grantcompass.exe" if sys.platform == "win32" else "grantcompass"
+    executable = Path(sys.executable).with_name(executable_name)
+    environment = os.environ.copy()
+    environment["GRANTCOMPASS_DATABASE_URL"] = database_url
+    environment["PYTHONIOENCODING"] = "cp949"
+    environment["PYTHONUTF8"] = "0"
+
+    # When
+    with stdout_path.open("wb") as stdout_file:
+        completed = subprocess.run(  # noqa: S603 - invokes the local installed CLI under test
+            [str(executable), "search", "--profile", "1", "--json"],
+            env=environment,
+            stdout=stdout_file,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    raw_output = stdout_path.read_bytes()
+
+    # Then
+    assert completed.returncode == 0
+    assert completed.stderr == b""
+    assert not raw_output.startswith(b"\xef\xbb\xbf")
+    assert b"\x1b[" not in raw_output
+    assert raw_output.endswith(b"\n")
+    assert not raw_output[:-1].endswith(b"\n")
+    decoded = raw_output[:-1].decode("utf-8")
+    search_output = SearchOutput.model_validate_json(decoded)
+    assert search_output.profile.display_name == "한국 테스트기업"
+    assert "합성 지원사업 1" in decoded
 
 
 def test_report_writes_all_search_programs_and_review_gaps(tmp_path: Path) -> None:
