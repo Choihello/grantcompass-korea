@@ -19,6 +19,7 @@ _ASCII_DELETE: Final = 127
 _MAX_DNS_HOST_LENGTH: Final = 253
 _MAX_DNS_LABEL_LENGTH: Final = 63
 _HEX_DIGITS: Final = frozenset("0123456789abcdefABCDEF")
+_UNRESERVED: Final = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 _AGE_RULE_KINDS: Final = frozenset({RuleKind.BUSINESS_AGE_MONTHS, RuleKind.REPRESENTATIVE_AGE})
 _NUMERIC_RULE_KINDS: Final = _AGE_RULE_KINDS | {RuleKind.PERFORMANCE}
 _SET_RULE_KINDS: Final = frozenset({RuleKind.REGION, RuleKind.INDUSTRY, RuleKind.DUPLICATE_BENEFIT})
@@ -148,10 +149,11 @@ def _canonical_urls(rule: EligibilityRule) -> frozenset[str] | None:
 
 
 def _canonical_url(value: str) -> str | None:
-    if _has_forbidden_ascii(value) or not _has_valid_percent_escapes(value):
+    normalized_value = None if _has_forbidden_ascii(value) else _normalize_percent_encoding(value)
+    if normalized_value is None:
         return None
     try:
-        parsed = urlsplit(value)
+        parsed = urlsplit(normalized_value)
         port = parsed.port
     except ValueError:
         return None
@@ -170,7 +172,7 @@ def _canonical_url(value: str) -> str | None:
         scheme == "https" and port == HTTPS_DEFAULT_PORT
     )
     netloc = rendered_host if port is None or default_port else f"{rendered_host}:{port}"
-    return urlunsplit((scheme, netloc, parsed.path, parsed.query, ""))
+    return urlunsplit((scheme, netloc, parsed.path or "/", parsed.query, ""))
 
 
 def _has_forbidden_ascii(value: str) -> bool:
@@ -179,15 +181,26 @@ def _has_forbidden_ascii(value: str) -> bool:
     )
 
 
-def _has_valid_percent_escapes(value: str) -> bool:
-    for index, character in enumerate(value):
-        if character == "%" and (
+def _normalize_percent_encoding(value: str) -> str | None:
+    normalized: list[str] = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character != "%":
+            normalized.append(character)
+            index += 1
+            continue
+        if (
             index + 2 >= len(value)
             or value[index + 1] not in _HEX_DIGITS
             or value[index + 2] not in _HEX_DIGITS
         ):
-            return False
-    return True
+            return None
+        escape = value[index + 1 : index + 3]
+        decoded = chr(int(escape, 16))
+        normalized.append(decoded if decoded in _UNRESERVED else f"%{escape.upper()}")
+        index += 3
+    return "".join(normalized)
 
 
 def _canonical_host(hostname: str) -> tuple[str, bool] | None:
