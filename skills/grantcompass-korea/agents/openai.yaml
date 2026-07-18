@@ -1,0 +1,4 @@
+interface:
+  display_name: "GrantCompass Korea"
+  short_description: "한국 창업지원사업 검색·근거검토·준비보고서 도우미"
+  default_prompt: "Use $grantcompass-korea to search official Korean startup-support programs and prepare an evidence-based report."
