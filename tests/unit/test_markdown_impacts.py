@@ -141,3 +141,95 @@ def test_report_rejects_bare_roadmap_reassessment_flag_without_canonical_impact(
     with pytest.raises(MatchingInputError) as error:
         _ = render_markdown_report(report_input)
     assert error.value.code == "inconsistent_change_impact"
+
+
+@pytest.mark.parametrize(
+    ("impact", "expected_code"),
+    [
+        (
+            ChangeImpact(
+                program_id=ProgramId(999),
+                changed_fields=("title",),
+                impacted_assessment_ids=(AssessmentId(300),),
+            ),
+            "unknown_impact_program_id",
+        ),
+        (
+            ChangeImpact(
+                program_id=ProgramId(3),
+                changed_fields=("title",),
+                impacted_assessment_ids=(AssessmentId(999),),
+            ),
+            "unknown_impact_assessment_id",
+        ),
+        (
+            ChangeImpact(
+                program_id=ProgramId(3),
+                changed_fields=("title",),
+                impacted_assessment_ids=(AssessmentId(300), AssessmentId(300)),
+            ),
+            "unknown_impact_assessment_id",
+        ),
+    ],
+)
+def test_canonical_impact_keeps_report_copy_boundary_error(
+    impact: ChangeImpact,
+    expected_code: str,
+) -> None:
+    base = make_input()
+    canonical = _impact()
+    match = replace(base.matches[0], change_impact=canonical)
+    report_input = replace(
+        base,
+        matches=(match,),
+        roadmaps=(build_roadmap(match),),
+        change_impacts=(impact,),
+    )
+
+    with pytest.raises(MatchingInputError) as error:
+        _ = render_markdown_report(report_input)
+    assert error.value.code == expected_code
+
+
+@pytest.mark.parametrize(
+    ("impact", "expected_code"),
+    [
+        (
+            ChangeImpact(
+                program_id=ProgramId(999),
+                changed_fields=("title",),
+                impacted_assessment_ids=(AssessmentId(300),),
+            ),
+            "unknown_impact_program_id",
+        ),
+        (
+            ChangeImpact(
+                program_id=ProgramId(3),
+                changed_fields=("title",),
+                impacted_assessment_ids=(AssessmentId(999),),
+            ),
+            "unknown_impact_assessment_id",
+        ),
+        (
+            ChangeImpact(
+                program_id=ProgramId(3),
+                changed_fields=("title",),
+                impacted_assessment_ids=(AssessmentId(300), AssessmentId(300)),
+            ),
+            "unknown_impact_assessment_id",
+        ),
+    ],
+)
+def test_canonical_impact_keeps_roadmap_copy_boundary_error(
+    impact: ChangeImpact,
+    expected_code: str,
+) -> None:
+    base = make_input()
+    canonical = _impact()
+    match = replace(base.matches[0], change_impact=canonical)
+    roadmap = replace(build_roadmap(match), change_impact=impact)
+    report_input = replace(base, matches=(match,), roadmaps=(roadmap,))
+
+    with pytest.raises(MatchingInputError) as error:
+        _ = render_markdown_report(report_input)
+    assert error.value.code == expected_code

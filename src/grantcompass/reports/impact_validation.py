@@ -1,6 +1,6 @@
 """Canonical change-impact validation for report inputs."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final
 
 from grantcompass.domain.documents import Evidence, EvidenceId
@@ -112,10 +112,11 @@ def _canonical_impact(
 ) -> ChangeImpact | None:
     roadmap_impact = None if roadmap is None else roadmap.change_impact
     canonical = validate_change_impacts(match, ())
+    compatibility_match = replace(match, change_impact=None)
     if roadmap_impact is not None:
-        _ = validate_change_impacts(match, (roadmap_impact,))
+        _ = validate_change_impacts(compatibility_match, (roadmap_impact,))
     if report_impact is not None:
-        _ = validate_change_impacts(match, (report_impact,))
+        _ = validate_change_impacts(compatibility_match, (report_impact,))
     if roadmap_impact is not None and roadmap_impact != canonical:
         raise MatchingInputError(_INCONSISTENT_IMPACT)
     if report_impact is not None and report_impact != canonical:
