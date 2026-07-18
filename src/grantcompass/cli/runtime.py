@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol, assert_never
 
 import httpx2
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from grantcompass.cli.errors import CliError, CliErrorCode
 from grantcompass.clock import Clock, SystemClock
@@ -73,3 +73,11 @@ def default_dependencies() -> CliDependencies:
 
 def _load_settings() -> Settings:
     return Settings()
+
+
+def load_settings(dependencies: CliDependencies) -> Settings:
+    """Load settings through the finite CLI configuration boundary."""
+    try:
+        return dependencies.settings_provider()
+    except ValidationError:
+        raise CliError(CliErrorCode.INVALID_CONFIGURATION, 4) from None

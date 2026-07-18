@@ -1,12 +1,10 @@
 """Async command services independent from Typer presentation."""
 
-from pydantic import ValidationError
-
 from grantcompass.cli.database import create_cli_engine, initialize_database
 from grantcompass.cli.errors import CliError, CliErrorCode
 from grantcompass.cli.profiles import ProfileRepository
 from grantcompass.cli.reporting import ReportRequest, generate_report
-from grantcompass.cli.runtime import CliDependencies
+from grantcompass.cli.runtime import CliDependencies, load_settings
 from grantcompass.cli.schemas import (
     ProfileCreatedOutput,
     ProfileCreateInput,
@@ -16,13 +14,12 @@ from grantcompass.cli.schemas import (
 )
 from grantcompass.cli.search import search_programs
 from grantcompass.cli.sync import SourceSelection, synchronize_sources
-from grantcompass.config import Settings
 from grantcompass.storage.db import create_session_factory
 
 
 async def initialize_command(dependencies: CliDependencies) -> None:
     """Initialize the complete configured database schema."""
-    await initialize_database(_settings(dependencies).database_url)
+    await initialize_database(load_settings(dependencies).database_url)
 
 
 async def create_profile_command(
@@ -30,7 +27,7 @@ async def create_profile_command(
     profile_input: ProfileCreateInput,
 ) -> ProfileCreatedOutput:
     """Create one unique profile and return its persisted identity."""
-    settings = _settings(dependencies)
+    settings = load_settings(dependencies)
     engine = create_cli_engine(settings.database_url)
     try:
         session_factory = create_session_factory(engine)
@@ -54,7 +51,7 @@ async def search_command(
     profile_selector: str,
 ) -> SearchOutput:
     """Run one reproducible search for a selected profile."""
-    settings = _settings(dependencies)
+    settings = load_settings(dependencies)
     return (
         await search_programs(
             settings.database_url,
@@ -78,10 +75,3 @@ async def report_command(
 ) -> ReportWrittenOutput:
     """Generate and atomically persist a Task 10 Markdown report."""
     return await generate_report(dependencies, request)
-
-
-def _settings(dependencies: CliDependencies) -> Settings:
-    try:
-        return dependencies.settings_provider()
-    except ValidationError:
-        raise CliError(CliErrorCode.INVALID_CONFIGURATION, 4) from None

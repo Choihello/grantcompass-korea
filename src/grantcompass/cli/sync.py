@@ -9,7 +9,7 @@ from pydantic import SecretStr
 
 from grantcompass.cli.database import create_cli_engine
 from grantcompass.cli.freshness import load_one_source_freshness
-from grantcompass.cli.runtime import CliDependencies
+from grantcompass.cli.runtime import CliDependencies, load_settings
 from grantcompass.cli.schemas import SyncOutput, SyncResultOutput
 from grantcompass.config import Settings
 from grantcompass.domain.enums import FreshnessStatus, SourceName
@@ -41,7 +41,7 @@ async def synchronize_sources(
     selection: SourceSelection,
 ) -> SyncOutput:
     """Synchronize selected configured sources with one owned HTTP client."""
-    settings = dependencies.settings_provider()
+    settings = load_settings(dependencies)
     synced_at = dependencies.clock.now()
     sources = _selected_sources(selection)
     engine = create_cli_engine(settings.database_url)
@@ -116,13 +116,19 @@ async def _collect_sources(
 def _service_key(settings: Settings, source: SourceName) -> SecretStr | None:
     match source:
         case SourceName.KSTARTUP:
-            return settings.kstartup_service_key
+            return _configured_secret(settings.kstartup_service_key)
         case SourceName.BIZINFO:
-            return settings.bizinfo_service_key
+            return _configured_secret(settings.bizinfo_service_key)
         case SourceName.MANUAL:
             return None
         case _:
             assert_never(source)
+
+
+def _configured_secret(value: SecretStr | None) -> SecretStr | None:
+    if value is None or not value.get_secret_value().strip():
+        return None
+    return value
 
 
 def _selected_sources(selection: SourceSelection) -> tuple[SourceName, ...]:

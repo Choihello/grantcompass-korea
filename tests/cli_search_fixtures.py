@@ -20,7 +20,11 @@ from grantcompass.storage.table_programs import (
 )
 
 
-async def seed_search_fixture(database_url: str) -> None:
+async def seed_search_fixture(
+    database_url: str,
+    *,
+    representative_age: bool = False,
+) -> None:
     engine = create_engine(database_url)
     session_factory = create_session_factory(engine)
     try:
@@ -41,7 +45,11 @@ async def seed_search_fixture(database_url: str) -> None:
             await session.flush()
             for program_id in range(1, 5):
                 await _add_evidence_chain(session, program_id)
-                session.add(_rule_for(program_id))
+                session.add(
+                    _representative_age_rule()
+                    if representative_age and program_id == 1
+                    else _rule_for(program_id)
+                )
                 await session.flush()
             session.add_all(_source_runs())
             await session.flush()
@@ -182,6 +190,19 @@ def _rule_for(program_id: int) -> EligibilityRuleRow:
         operator="in",
         expected_json=expected[program_id - 1],
         required=required[program_id - 1],
+        review_status="automatic",
+        rule_version="rules-v1",
+    )
+
+
+def _representative_age_rule() -> EligibilityRuleRow:
+    return EligibilityRuleRow(
+        id=10,
+        program_id=1,
+        kind="representative_age",
+        operator="lte",
+        expected_json="40",
+        required=True,
         review_status="automatic",
         rule_version="rules-v1",
     )

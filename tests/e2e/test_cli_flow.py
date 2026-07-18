@@ -39,14 +39,9 @@ def test_db_init_is_idempotent_against_real_isolated_sqlite(
     assert anyio.run(_profile_count, database_url) == 0
 
 
-def test_profile_search_report_flow_uses_real_sqlite_and_domain_services(tmp_path: Path) -> None:
+def test_search_flow_is_reproducible_against_real_sqlite(tmp_path: Path) -> None:
     # Given
-    database_path = tmp_path / "flow.db"
-    database_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
-    app = create_app(make_dependencies(database_url))
-    runner = CliRunner()
-    assert runner.invoke(app, ["db", "init"]).exit_code == 0
-    _prepare_search_fixture(runner, app, database_url)
+    runner, app, _ = _prepared_flow(tmp_path)
 
     # When
     first_search = runner.invoke(app, ["search", "--profile", "1", "--json"])
@@ -54,9 +49,84 @@ def test_profile_search_report_flow_uses_real_sqlite_and_domain_services(tmp_pat
 
     # Then
     _assert_search_results(first_search, second_search)
+
+
+def test_report_writes_all_search_programs_and_review_gaps(tmp_path: Path) -> None:
+    # Given
+    runner, app, report_path = _prepared_flow(tmp_path)
+
+    # When
+    reported = runner.invoke(
+        app,
+        ["report", "--profile", "1", "--out", str(report_path), "--json"],
+    )
+
+    # Then
+    _assert_report_written(reported, report_path)
+
+
+def test_report_refuses_existing_output_without_force(tmp_path: Path) -> None:
+    # Given
+    runner, app, report_path = _prepared_flow(tmp_path)
+    first = runner.invoke(
+        app,
+        ["report", "--profile", "1", "--out", str(report_path), "--json"],
+    )
+    assert first.exit_code == 0
+
+    # When
+    refused = runner.invoke(
+        app,
+        ["report", "--profile", "1", "--out", str(report_path), "--json"],
+    )
+
+    # Then
+    assert refused.exit_code == 3
+    assert refused.stdout == ""
+    assert refused.stderr == "output_exists\n"
+
+
+def test_report_force_replaces_existing_output_atomically(tmp_path: Path) -> None:
+    # Given
+    runner, app, report_path = _prepared_flow(tmp_path)
+    first = runner.invoke(
+        app,
+        ["report", "--profile", "1", "--out", str(report_path), "--json"],
+    )
+    assert first.exit_code == 0
+    _ = report_path.write_text("sentinel", encoding="utf-8")
+
+    # When
+    forced = runner.invoke(
+        app,
+        [
+            "report",
+            "--profile",
+            "1",
+            "--out",
+            str(report_path),
+            "--force",
+            "--json",
+        ],
+    )
+
+    # Then
+    assert forced.exit_code == 0
+    forced_output = ReportWrittenOutput.model_validate_json(forced.stdout)
+    assert forced_output.schema_version == "1.0"
+    assert report_path.read_text(encoding="utf-8").startswith("# GrantCompass report\n")
+
+
+def _prepared_flow(tmp_path: Path) -> tuple[CliRunner, Typer, Path]:
+    database_path = tmp_path / "flow.db"
+    database_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    app = create_app(make_dependencies(database_url))
+    runner = CliRunner()
+    assert runner.invoke(app, ["db", "init"]).exit_code == 0
+    _prepare_search_fixture(runner, app, database_url)
     report_path = tmp_path / "reports" / "합성기업.md"
-    report_path.parent.mkdir()
-    _assert_report_lifecycle(runner, app, report_path)
+    _ = report_path.parent.mkdir()
+    return runner, app, report_path
 
 
 def _prepare_search_fixture(
@@ -122,11 +192,7 @@ def _assert_search_results(first_search: Result, second_search: Result) -> None:
     assert freshness[SourceName.BIZINFO].last_successful_at is not None
 
 
-def _assert_report_lifecycle(runner: CliRunner, app: Typer, report_path: Path) -> None:
-    reported = runner.invoke(
-        app,
-        ["report", "--profile", "1", "--out", str(report_path), "--json"],
-    )
+def _assert_report_written(reported: Result, report_path: Path) -> None:
     assert reported.exit_code == 0
     assert reported.stderr == ""
     report_output = ReportWrittenOutput.model_validate_json(reported.stdout)
@@ -141,22 +207,15 @@ def _assert_report_lifecycle(runner: CliRunner, app: Typer, report_path: Path) -
     assert "document_hash:" in report
     assert "block_id:" in report
     assert "review_status: review_required" in report
+    assert "missing\\_rules" in report
+    assert report.count("missing\\_rules") == 1
+    represented_programs = tuple(
+        line
+        for line in report.splitlines()
+        if line.startswith(("## program ", "## unassessed program "))
+    )
+    assert len(represented_programs) == report_output.result_count
     assert not tuple(report_path.parent.glob(".*.tmp"))
-
-    refused = runner.invoke(
-        app,
-        ["report", "--profile", "1", "--out", str(report_path), "--json"],
-    )
-    assert refused.exit_code == 3
-    assert refused.stdout == ""
-    assert refused.stderr == "output_exists\n"
-    forced = runner.invoke(
-        app,
-        ["report", "--profile", "1", "--out", str(report_path), "--force", "--json"],
-    )
-    assert forced.exit_code == 0
-    forced_output = ReportWrittenOutput.model_validate_json(forced.stdout)
-    assert forced_output.schema_version == "1.0"
 
 
 async def _profile_count(database_url: str) -> int:

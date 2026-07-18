@@ -62,6 +62,10 @@ def create_app(dependencies: CliDependencies | None = None) -> typer.Typer:
         ] = None,
         region: Annotated[list[str] | None, typer.Option("--region")] = None,
         industry: Annotated[list[str] | None, typer.Option("--industry")] = None,
+        representative_birth_year: Annotated[
+            int | None,
+            typer.Option("--representative-birth-year"),
+        ] = None,
         json_output: Annotated[bool, typer.Option("--json")] = False,
     ) -> None:
         profile_input = _profile_input(
@@ -69,6 +73,7 @@ def create_app(dependencies: CliDependencies | None = None) -> typer.Typer:
             founded_on,
             region,
             industry,
+            representative_birth_year,
         )
         output = _execute(partial(create_profile_command, runtime, profile_input))
         _emit(
@@ -114,6 +119,7 @@ def _profile_input(
     founded_on: datetime | None,
     regions: list[str] | None,
     industries: list[str] | None,
+    representative_birth_year: int | None,
 ) -> ProfileCreateInput:
     try:
         return ProfileCreateInput(
@@ -121,7 +127,7 @@ def _profile_input(
             founded_on=None if founded_on is None else founded_on.date(),
             regions=tuple(regions or ()),
             industries=tuple(industries or ()),
-            representative_birth_year=None,
+            representative_birth_year=representative_birth_year,
         )
     except ValidationError:
         _fail(CliError(CliErrorCode.INVALID_PROFILE_INPUT, 3))

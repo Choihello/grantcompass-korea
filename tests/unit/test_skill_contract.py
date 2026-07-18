@@ -3,6 +3,14 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
+from grantcompass.cli.schemas import (
+    ConditionOutput,
+    EvidenceOutput,
+    SearchOutput,
+    SearchProgramOutput,
+    SourceFreshnessOutput,
+)
+
 SKILL_PATH = Path("skills/grantcompass-korea")
 
 
@@ -13,7 +21,11 @@ class SkillMachineContract(BaseModel):
     commands: tuple[str, ...]
     workflow: tuple[str, ...]
     stop_on: tuple[str, ...]
+    search_output_fields: tuple[str, ...]
+    result_fields: tuple[str, ...]
+    condition_fields: tuple[str, ...]
     evidence_fields: tuple[str, ...]
+    freshness_fields: tuple[str, ...]
     untrusted_inputs: tuple[str, ...]
     prohibited: tuple[str, ...]
 
@@ -82,18 +94,17 @@ def test_skill_machine_contract_limits_commands_and_preserves_safety_boundaries(
         "generate_report_on_request",
     )
     assert set(contract.stop_on) == {
-        "unknown",
-        "conflict",
-        "stale",
-        "missing_evidence",
-        "assessment_error",
+        "result.input_errors.non_empty",
+        "result.review_status=review_required",
+        "source_freshness.status=stale",
+        "condition.status=unknown",
+        "condition.status=conflict",
     }
-    assert set(contract.evidence_fields) == {
-        "official_url",
-        "document_id",
-        "page",
-        "section_path",
-    }
+    assert contract.search_output_fields == tuple(SearchOutput.model_fields)
+    assert contract.result_fields == tuple(SearchProgramOutput.model_fields)
+    assert contract.condition_fields == tuple(ConditionOutput.model_fields)
+    assert contract.evidence_fields == tuple(EvidenceOutput.model_fields)
+    assert contract.freshness_fields == tuple(SourceFreshnessOutput.model_fields)
     assert set(contract.untrusted_inputs) == {
         "notice_title",
         "quote",

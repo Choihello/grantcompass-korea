@@ -110,6 +110,10 @@ unfixable = []
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.pylint]
+# The profile-create Typer callback exposes six independent user-facing options.
+max-args = 6
+
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = [
     "fastapi.Body",
