@@ -210,6 +210,18 @@ def test_same_source_outcomes_do_not_promote_conflict() -> None:
             "document-b",
             "https://different.invalid/rule",
         ),
+        (
+            "document-a",
+            "https://exa mple.invalid/rule",
+            "document-b",
+            "https://different.invalid/rule",
+        ),
+        (
+            "document-a",
+            "https://example.invalid/%ZZ",
+            "document-b",
+            "https://different.invalid/rule",
+        ),
     ],
 )
 def test_overlapping_source_identity_does_not_promote_conflict(
