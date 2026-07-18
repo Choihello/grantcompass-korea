@@ -1,5 +1,4 @@
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -87,12 +86,14 @@ def test_installed_search_json_is_utf8_and_single_document(tmp_path: Path) -> No
 
     # When
     with stdout_path.open("wb") as stdout_file:
-        completed = subprocess.run(  # noqa: S603 - invokes the local installed CLI under test
-            [str(executable), "search", "--profile", "1", "--json"],
-            env=environment,
-            stdout=stdout_file,
-            stderr=subprocess.PIPE,
-            check=False,
+        completed = anyio.run(
+            lambda: anyio.run_process(
+                [str(executable), "search", "--profile", "1", "--json"],
+                env=environment,
+                stdout=stdout_file,
+                stderr=-1,
+                check=False,
+            )
         )
     raw_output = stdout_path.read_bytes()
 
