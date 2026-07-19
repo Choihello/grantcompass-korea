@@ -18,6 +18,11 @@ from grantcompass.domain.json_types import (
     freeze_json_object,
     thaw_json_object,
 )
+from grantcompass.storage.audit_schemas import (
+    AuditStateKind,
+    parse_audit_identity,
+    validate_audit_state,
+)
 from grantcompass.storage.table_cases import AuditEventRow
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -35,12 +40,14 @@ def dump_audit_json(value: FrozenJsonObject) -> str:
     )
 
 
-def load_audit_json(value: str | None) -> FrozenJsonObject | None:
+def load_audit_json(value: str | None, kind: AuditStateKind) -> FrozenJsonObject:
     """Parse one stored audit state or surface a finite corruption code."""
     if value is None:
-        return None
+        raise AuditValidationError(AuditErrorCode.MALFORMED_AUDIT)
     try:
-        return freeze_json_object(_JSON_OBJECT.validate_json(value))
+        validate_audit_state(value, kind)
+        raw = _JSON_OBJECT.validate_json(value, strict=True)
+        return freeze_json_object(raw)
     except ValidationError:
         raise AuditValidationError(AuditErrorCode.MALFORMED_AUDIT) from None
 
@@ -66,17 +73,21 @@ def validate_attribution(actor: str, reason: str, occurred_at: datetime) -> tupl
 
 def audit_event_from_row(row: AuditEventRow) -> AuditEvent:
     """Parse one mutable audit row into an immutable domain event."""
-    return AuditEvent(
-        id=AuditEventId(row.id),
-        entity_type=row.entity_type,
-        entity_id=row.entity_id,
-        action=row.action,
-        actor_name=row.actor_name,
-        reason=row.reason,
-        before_json=load_audit_json(row.before_json),
-        after_json=load_audit_json(row.after_json),
-        created_at=aware_utc(row.created_at),
-    )
+    try:
+        kind = parse_audit_identity(row.entity_type, row.action)
+        return AuditEvent(
+            id=AuditEventId(row.id),
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            action=row.action,
+            actor_name=row.actor_name,
+            reason=row.reason,
+            before_json=load_audit_json(row.before_json, kind),
+            after_json=load_audit_json(row.after_json, kind),
+            created_at=aware_utc(row.created_at),
+        )
+    except ValidationError:
+        raise AuditValidationError(AuditErrorCode.MALFORMED_AUDIT) from None
 
 
 def aware_utc(value: datetime) -> datetime:

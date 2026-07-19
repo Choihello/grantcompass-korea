@@ -2,7 +2,7 @@
 
 from typing import final
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.cases import (
@@ -17,9 +17,9 @@ from grantcompass.domain.reviews import AssessmentReview, AssessmentReviewComman
 from grantcompass.storage.audit_json import (
     audit_event_from_row,
     dump_audit_json,
-    load_audit_json,
     validate_attribution,
 )
+from grantcompass.storage.read_scope import RepositoryReadScope
 from grantcompass.storage.review_builders import (
     ReviewSource,
     automatic_review_snapshot,
@@ -48,6 +48,8 @@ class AssessmentRepository:
             if assessment is None:
                 raise AuditValidationError(AuditErrorCode.ASSESSMENT_NOT_FOUND)
             original_status = parse_review_status(assessment.review_status)
+            observed_revision = _validated_review_revision(assessment.review_revision)
+            next_revision = observed_revision + 1
             conditions = tuple(
                 (
                     await self._session.scalars(
@@ -79,19 +81,27 @@ class AssessmentRepository:
                 command.reviewed_at,
             )
             prior = await self._latest_audit_after(command.assessment_id)
-            before = automatic_review_snapshot(review, original_status) if prior is None else prior
+            before = (
+                automatic_review_snapshot(review, original_status, observed_revision)
+                if prior is None
+                else prior
+            )
             updated_id = await self._session.scalar(
                 update(AssessmentRow)
                 .where(
                     AssessmentRow.id == assessment.id,
                     AssessmentRow.review_status == assessment.review_status,
+                    AssessmentRow.review_revision == observed_revision,
                 )
-                .values(review_status=ReviewStatus.REVIEWED.value)
+                .values(
+                    review_status=ReviewStatus.REVIEWED.value,
+                    review_revision=next_revision,
+                )
                 .returning(AssessmentRow.id)
             )
             if updated_id != assessment.id:
                 raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
-            after = completed_review_snapshot(review)
+            after = completed_review_snapshot(review, next_revision)
             self._session.add(
                 AuditEventRow(
                     entity_type="assessment",
@@ -108,28 +118,46 @@ class AssessmentRepository:
 
     async def audit_events(self, assessment_id: AssessmentId) -> tuple[AuditEvent, ...]:
         """Return immutable assessment audit events oldest-first."""
-        if await self._session.get(AssessmentRow, int(assessment_id)) is None:
-            raise AuditValidationError(AuditErrorCode.ASSESSMENT_NOT_FOUND)
-        rows = (
-            await self._session.scalars(
-                select(AuditEventRow)
-                .where(
-                    AuditEventRow.entity_type == "assessment",
-                    AuditEventRow.entity_id == str(int(assessment_id)),
+        async with RepositoryReadScope(self._session):
+            if await self._session.get(AssessmentRow, int(assessment_id)) is None:
+                raise AuditValidationError(AuditErrorCode.ASSESSMENT_NOT_FOUND)
+            rows = (
+                await self._session.scalars(
+                    select(AuditEventRow)
+                    .where(
+                        AuditEventRow.entity_id == str(int(assessment_id)),
+                        or_(
+                            AuditEventRow.entity_type == "assessment",
+                            AuditEventRow.entity_type.not_in(("assessment", "case")),
+                        ),
+                    )
+                    .order_by(AuditEventRow.id)
                 )
-                .order_by(AuditEventRow.id)
-            )
-        ).all()
-        return tuple(audit_event_from_row(row) for row in rows)
+            ).all()
+            return tuple(audit_event_from_row(row) for row in rows)
 
     async def _latest_audit_after(self, assessment_id: AssessmentId) -> FrozenJsonObject | None:
         row = await self._session.scalar(
             select(AuditEventRow)
             .where(
-                AuditEventRow.entity_type == "assessment",
                 AuditEventRow.entity_id == str(int(assessment_id)),
+                or_(
+                    AuditEventRow.entity_type == "assessment",
+                    AuditEventRow.entity_type.not_in(("assessment", "case")),
+                ),
             )
             .order_by(AuditEventRow.id.desc())
             .limit(1)
         )
-        return None if row is None else load_audit_json(row.after_json)
+        if row is None:
+            return None
+        event = audit_event_from_row(row)
+        if event.after_json is None:
+            raise AuditValidationError(AuditErrorCode.MALFORMED_AUDIT)
+        return event.after_json
+
+
+def _validated_review_revision(value: int) -> int:
+    if isinstance(value, bool) or value < 0:
+        raise AuditValidationError(AuditErrorCode.MALFORMED_ASSESSMENT)
+    return value

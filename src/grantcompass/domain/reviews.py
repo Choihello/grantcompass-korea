@@ -43,6 +43,7 @@ class ReviewedCondition:
     effective_status: ConditionStatus
     explanation: str
     evidence_ids: tuple[EvidenceId, ...]
+    error_id: str | None
 
 
 @dataclass(frozen=True, slots=True)

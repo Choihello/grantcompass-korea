@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import StrictInt, TypeAdapter, ValidationError
 
 from grantcompass.domain.cases import AuditErrorCode, AuditValidationError
 from grantcompass.domain.documents import EvidenceId
@@ -22,7 +22,7 @@ from grantcompass.rules.aggregate import aggregate_final_status
 from grantcompass.storage.audit_json import aware_utc
 from grantcompass.storage.table_eligibility import AssessmentRow, RuleAssessmentRow
 
-_EVIDENCE_IDS = TypeAdapter(tuple[int, ...])
+_EVIDENCE_IDS = TypeAdapter(tuple[StrictInt, ...])
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +41,7 @@ class _SnapshotView:
     effective_final_status: FinalStatus
     overrides: tuple[ConditionOverride, ...]
     reviewed_at: datetime | None
+    review_revision: int
 
 
 def validate_review_overrides(
@@ -76,6 +77,11 @@ def build_assessment_review(source: ReviewSource, reviewed_at: datetime) -> Asse
         for row in source.conditions
     )
     automatic_final_status = parse_final_status(source.assessment.final_status)
+    if (
+        aggregate_final_status(tuple(item.automatic_status for item in conditions))
+        is not automatic_final_status
+    ):
+        raise AuditValidationError(AuditErrorCode.MALFORMED_ASSESSMENT)
     overrides = tuple(source.override_by_id[key] for key in sorted(source.override_by_id, key=int))
     return AssessmentReview(
         assessment_id=AssessmentId(source.assessment.id),
@@ -95,6 +101,7 @@ def build_assessment_review(source: ReviewSource, reviewed_at: datetime) -> Asse
 def automatic_review_snapshot(
     review: AssessmentReview,
     original_status: ReviewStatus,
+    review_revision: int,
 ) -> FrozenJsonObject:
     """Build the first review's untouched automatic before-state."""
     automatic_conditions = tuple(
@@ -118,11 +125,15 @@ def automatic_review_snapshot(
             automatic_review.automatic_final_status,
             (),
             None,
+            review_revision,
         )
     )
 
 
-def completed_review_snapshot(review: AssessmentReview) -> FrozenJsonObject:
+def completed_review_snapshot(
+    review: AssessmentReview,
+    review_revision: int,
+) -> FrozenJsonObject:
     """Build one completed review's actor-independent after-state."""
     return _review_snapshot(
         _SnapshotView(
@@ -131,6 +142,7 @@ def completed_review_snapshot(review: AssessmentReview) -> FrozenJsonObject:
             review.effective_final_status,
             review.overrides,
             review.reviewed_at,
+            review_revision,
         )
     )
 
@@ -157,11 +169,12 @@ def _reviewed_condition(
 ) -> ReviewedCondition:
     try:
         automatic = ConditionStatus(row.status)
-        evidence_ids = tuple(
-            EvidenceId(value) for value in _EVIDENCE_IDS.validate_json(row.evidence_ids_json)
-        )
+        parsed_evidence_ids = _EVIDENCE_IDS.validate_json(row.evidence_ids_json, strict=True)
     except (ValueError, ValidationError):
         raise AuditValidationError(AuditErrorCode.MALFORMED_ASSESSMENT) from None
+    if any(value <= 0 for value in parsed_evidence_ids):
+        raise AuditValidationError(AuditErrorCode.MALFORMED_ASSESSMENT)
+    evidence_ids = tuple(EvidenceId(value) for value in parsed_evidence_ids)
     return ReviewedCondition(
         rule_assessment_id=RuleAssessmentId(row.id),
         rule_id=EligibilityRuleId(row.rule_id),
@@ -170,6 +183,7 @@ def _reviewed_condition(
         effective_status=automatic if override is None else override.status,
         explanation=row.explanation,
         evidence_ids=evidence_ids,
+        error_id=row.error_id,
     )
 
 
@@ -181,6 +195,7 @@ def _review_snapshot(view: _SnapshotView) -> FrozenJsonObject:
             "automatic_final_status": view.review.automatic_final_status.value,
             "review_status": view.status.value,
             "effective_final_status": view.effective_final_status.value,
+            "review_revision": view.review_revision,
             "reviewed_at": None if view.reviewed_at is None else view.reviewed_at.isoformat(),
             "overrides": [
                 {
@@ -197,6 +212,7 @@ def _review_snapshot(view: _SnapshotView) -> FrozenJsonObject:
                     "status": item.automatic_status.value,
                     "explanation": item.explanation,
                     "evidence_ids": [int(value) for value in item.evidence_ids],
+                    "error_id": item.error_id,
                 }
                 for item in view.review.conditions
             ],

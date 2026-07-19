@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import assert_never, final
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.cases import (
@@ -24,6 +24,7 @@ from grantcompass.storage.audit_json import (
     dump_audit_json,
     validate_attribution,
 )
+from grantcompass.storage.read_scope import RepositoryReadScope
 from grantcompass.storage.table_cases import AuditEventRow, CaseRow
 
 
@@ -79,19 +80,23 @@ class CaseRepository:
 
     async def audit_events(self, case_id: CaseId) -> tuple[AuditEvent, ...]:
         """Return immutable case audit events oldest-first."""
-        if await self._session.get(CaseRow, int(case_id)) is None:
-            raise AuditValidationError(AuditErrorCode.CASE_NOT_FOUND)
-        rows = (
-            await self._session.scalars(
-                select(AuditEventRow)
-                .where(
-                    AuditEventRow.entity_type == "case",
-                    AuditEventRow.entity_id == str(int(case_id)),
+        async with RepositoryReadScope(self._session):
+            if await self._session.get(CaseRow, int(case_id)) is None:
+                raise AuditValidationError(AuditErrorCode.CASE_NOT_FOUND)
+            rows = (
+                await self._session.scalars(
+                    select(AuditEventRow)
+                    .where(
+                        AuditEventRow.entity_id == str(int(case_id)),
+                        or_(
+                            AuditEventRow.entity_type == "case",
+                            AuditEventRow.entity_type.not_in(("assessment", "case")),
+                        ),
+                    )
+                    .order_by(AuditEventRow.id)
                 )
-                .order_by(AuditEventRow.id)
-            )
-        ).all()
-        return tuple(audit_event_from_row(row) for row in rows)
+            ).all()
+            return tuple(audit_event_from_row(row) for row in rows)
 
 
 def _case_stage(value: str) -> CaseStage:

@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from grantcompass.cli.assessment_store import persist_assessments
 from grantcompass.cli.database import create_cli_engine
 from grantcompass.cli.errors import CliError, CliErrorCode
 from grantcompass.cli.freshness import FreshnessRecord, load_source_freshness
@@ -17,6 +16,7 @@ from grantcompass.domain.ids import ProgramId
 from grantcompass.matching.forward import ProgramMatch, rank_programs
 from grantcompass.matching.roadmap import ProgramRoadmap, build_roadmap
 from grantcompass.rules.deterministic import AssessmentInputError, DeterministicAssessmentEngine
+from grantcompass.storage.assessment_runs import persist_assessments
 from grantcompass.storage.db import create_session_factory
 
 type AssessmentErrors = tuple[tuple[ProgramId, tuple[str, ...]], ...]

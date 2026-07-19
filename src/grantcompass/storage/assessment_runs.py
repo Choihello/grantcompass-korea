@@ -10,11 +10,11 @@ from grantcompass.domain.ids import AssessmentId
 from grantcompass.storage.table_eligibility import AssessmentRow, RuleAssessmentRow
 
 
-async def persist_assessment(
+async def append_assessment(
     session: AsyncSession,
     assessment: AssessmentResult,
 ) -> AssessmentResult:
-    """Append one assessment and all evidence-preserving condition results."""
+    """Flush one evidence-preserving assessment without owning the transaction."""
     row = AssessmentRow(
         program_id=int(assessment.program_id),
         profile_id=int(assessment.profile_id),
@@ -32,6 +32,7 @@ async def persist_assessment(
                 rule_id=int(item.rule_id),
                 status=item.status.value,
                 explanation=item.explanation,
+                error_id=item.error_id,
                 evidence_ids_json=json.dumps(
                     tuple(int(value) for value in item.evidence_ids),
                     separators=(",", ":"),
@@ -39,3 +40,21 @@ async def persist_assessment(
             )
         )
     return replace(assessment, id=AssessmentId(row.id))
+
+
+async def append_assessments(
+    session: AsyncSession,
+    assessments: tuple[AssessmentResult, ...],
+) -> tuple[AssessmentResult, ...]:
+    """Flush a batch through the single row-mapping implementation."""
+    return tuple([await append_assessment(session, item) for item in assessments])
+
+
+async def persist_assessments(
+    session: AsyncSession,
+    assessments: tuple[AssessmentResult, ...],
+) -> tuple[AssessmentResult, ...]:
+    """Commit a caller-requested assessment batch and return durable identities."""
+    persisted = await append_assessments(session, assessments)
+    await session.commit()
+    return persisted

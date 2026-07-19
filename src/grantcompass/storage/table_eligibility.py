@@ -51,6 +51,7 @@ class AssessmentRow(Base):
     review_status: Mapped[str] = mapped_column(String(40))
     rule_version: Mapped[str] = mapped_column(String(100))
     assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    review_revision: Mapped[int] = mapped_column(default=0, server_default="0")
 
 
 class RuleAssessmentRow(Base):
@@ -64,3 +65,4 @@ class RuleAssessmentRow(Base):
     status: Mapped[str] = mapped_column(String(40))
     explanation: Mapped[str] = mapped_column(Text)
     evidence_ids_json: Mapped[str] = mapped_column(Text)
+    error_id: Mapped[str | None] = mapped_column(String(100))
