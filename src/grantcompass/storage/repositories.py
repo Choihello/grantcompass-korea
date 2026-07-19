@@ -22,6 +22,8 @@ from grantcompass.domain.programs import (
     storage_key_for,
 )
 from grantcompass.domain.source_runs import SourceRunFailure, SourceRunId, SourceRunSuccess
+from grantcompass.storage.assessment_repository import AssessmentRepository
+from grantcompass.storage.case_repository import CaseRepository
 from grantcompass.storage.notice_ingest import NoticeIngestor
 from grantcompass.storage.notice_queries import (
     find_exact_program,
@@ -35,6 +37,8 @@ from grantcompass.storage.table_programs import (
     NoticeVersionRow,
     SourceRunRow,
 )
+
+__all__ = ["AssessmentRepository", "CaseRepository", "ProgramRepository"]
 
 _MAX_INGEST_ATTEMPTS = 3
 _RETRYABLE_SQLITE_INGEST_RACES = frozenset(

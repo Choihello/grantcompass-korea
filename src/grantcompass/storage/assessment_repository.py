@@ -1,0 +1,135 @@
+"""Atomic human assessment reviews with append-only audit history."""
+
+from typing import final
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from grantcompass.domain.cases import (
+    AuditErrorCode,
+    AuditEvent,
+    AuditValidationError,
+)
+from grantcompass.domain.enums import ReviewStatus
+from grantcompass.domain.ids import AssessmentId
+from grantcompass.domain.json_types import FrozenJsonObject
+from grantcompass.domain.reviews import AssessmentReview, AssessmentReviewCommand
+from grantcompass.storage.audit_json import (
+    audit_event_from_row,
+    dump_audit_json,
+    load_audit_json,
+    validate_attribution,
+)
+from grantcompass.storage.review_builders import (
+    ReviewSource,
+    automatic_review_snapshot,
+    build_assessment_review,
+    completed_review_snapshot,
+    parse_review_status,
+    validate_review_overrides,
+)
+from grantcompass.storage.table_cases import AuditEventRow
+from grantcompass.storage.table_eligibility import AssessmentRow, RuleAssessmentRow
+
+
+@final
+class AssessmentRepository:
+    """Review immutable automatic assessments in one async unit of work."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Bind review operations to one caller-owned session."""
+        self._session = session
+
+    async def review(self, command: AssessmentReviewCommand) -> AssessmentReview:
+        """Persist review progress and one attributed audit event atomically."""
+        actor, reason = validate_attribution(command.actor, command.reason, command.reviewed_at)
+        async with self._session.begin():
+            assessment = await self._session.get(AssessmentRow, int(command.assessment_id))
+            if assessment is None:
+                raise AuditValidationError(AuditErrorCode.ASSESSMENT_NOT_FOUND)
+            original_status = parse_review_status(assessment.review_status)
+            conditions = tuple(
+                (
+                    await self._session.scalars(
+                        select(RuleAssessmentRow)
+                        .where(RuleAssessmentRow.assessment_id == assessment.id)
+                        .order_by(RuleAssessmentRow.id)
+                    )
+                ).all()
+            )
+            requested_ids = tuple(int(item.rule_assessment_id) for item in command.overrides)
+            persisted_overrides = (
+                tuple(
+                    (
+                        await self._session.scalars(
+                            select(RuleAssessmentRow).where(RuleAssessmentRow.id.in_(requested_ids))
+                        )
+                    ).all()
+                )
+                if requested_ids
+                else ()
+            )
+            override_by_id = validate_review_overrides(
+                command.assessment_id,
+                command.overrides,
+                persisted_overrides,
+            )
+            review = build_assessment_review(
+                ReviewSource(assessment, conditions, override_by_id),
+                command.reviewed_at,
+            )
+            prior = await self._latest_audit_after(command.assessment_id)
+            before = automatic_review_snapshot(review, original_status) if prior is None else prior
+            updated_id = await self._session.scalar(
+                update(AssessmentRow)
+                .where(
+                    AssessmentRow.id == assessment.id,
+                    AssessmentRow.review_status == assessment.review_status,
+                )
+                .values(review_status=ReviewStatus.REVIEWED.value)
+                .returning(AssessmentRow.id)
+            )
+            if updated_id != assessment.id:
+                raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
+            after = completed_review_snapshot(review)
+            self._session.add(
+                AuditEventRow(
+                    entity_type="assessment",
+                    entity_id=str(assessment.id),
+                    action="review",
+                    actor_name=actor,
+                    reason=reason,
+                    before_json=dump_audit_json(before),
+                    after_json=dump_audit_json(after),
+                    created_at=command.reviewed_at,
+                )
+            )
+            return review
+
+    async def audit_events(self, assessment_id: AssessmentId) -> tuple[AuditEvent, ...]:
+        """Return immutable assessment audit events oldest-first."""
+        if await self._session.get(AssessmentRow, int(assessment_id)) is None:
+            raise AuditValidationError(AuditErrorCode.ASSESSMENT_NOT_FOUND)
+        rows = (
+            await self._session.scalars(
+                select(AuditEventRow)
+                .where(
+                    AuditEventRow.entity_type == "assessment",
+                    AuditEventRow.entity_id == str(int(assessment_id)),
+                )
+                .order_by(AuditEventRow.id)
+            )
+        ).all()
+        return tuple(audit_event_from_row(row) for row in rows)
+
+    async def _latest_audit_after(self, assessment_id: AssessmentId) -> FrozenJsonObject | None:
+        row = await self._session.scalar(
+            select(AuditEventRow)
+            .where(
+                AuditEventRow.entity_type == "assessment",
+                AuditEventRow.entity_id == str(int(assessment_id)),
+            )
+            .order_by(AuditEventRow.id.desc())
+            .limit(1)
+        )
+        return None if row is None else load_audit_json(row.after_json)
