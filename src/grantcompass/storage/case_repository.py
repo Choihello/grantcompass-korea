@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import assert_never, final
 
+from pydantic import ValidationError
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,12 +19,14 @@ from grantcompass.domain.cases import (
 from grantcompass.domain.enums import CaseStage
 from grantcompass.domain.ids import ProgramId
 from grantcompass.domain.json_types import FrozenJsonObject, freeze_json_object
+from grantcompass.storage.audit_chain import validate_case_after_state
 from grantcompass.storage.audit_json import (
     audit_event_from_row,
     aware_utc,
     dump_audit_json,
     validate_attribution,
 )
+from grantcompass.storage.audit_schemas import CaseAuditState, parse_case_audit_state
 from grantcompass.storage.read_scope import RepositoryReadScope
 from grantcompass.storage.table_cases import AuditEventRow, CaseRow
 
@@ -46,6 +49,14 @@ class CaseRepository:
             before_stage = _case_stage(row.stage)
             if command.stage not in _next_stages(before_stage):
                 raise AuditValidationError(AuditErrorCode.INVALID_TRANSITION)
+            persisted_stage = await self._session.scalar(
+                select(CaseRow.stage).where(CaseRow.id == row.id)
+            )
+            if persisted_stage != before_stage.value:
+                raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
+            prior = await self._latest_audit_after(command.case_id)
+            if prior is not None:
+                validate_case_after_state(prior[1], row, before_stage)
             before = _case_snapshot(row, before_stage, row.updated_at)
             updated_id = await self._session.scalar(
                 update(CaseRow)
@@ -89,14 +100,41 @@ class CaseRepository:
                     .where(
                         AuditEventRow.entity_id == str(int(case_id)),
                         or_(
+                            AuditEventRow.action == "transition",
                             AuditEventRow.entity_type == "case",
-                            AuditEventRow.entity_type.not_in(("assessment", "case")),
                         ),
                     )
                     .order_by(AuditEventRow.id)
                 )
             ).all()
             return tuple(audit_event_from_row(row) for row in rows)
+
+    async def _latest_audit_after(
+        self,
+        case_id: CaseId,
+    ) -> tuple[FrozenJsonObject, CaseAuditState] | None:
+        row = await self._session.scalar(
+            select(AuditEventRow)
+            .where(
+                AuditEventRow.entity_id == str(int(case_id)),
+                or_(
+                    AuditEventRow.action == "transition",
+                    AuditEventRow.entity_type == "case",
+                ),
+            )
+            .order_by(AuditEventRow.id.desc())
+            .limit(1)
+        )
+        if row is None:
+            return None
+        event = audit_event_from_row(row)
+        if event.after_json is None:
+            raise AuditValidationError(AuditErrorCode.MALFORMED_AUDIT)
+        try:
+            state = parse_case_audit_state(dump_audit_json(event.after_json))
+        except ValidationError:
+            raise AuditValidationError(AuditErrorCode.MALFORMED_AUDIT) from None
+        return event.after_json, state
 
 
 def _case_stage(value: str) -> CaseStage:

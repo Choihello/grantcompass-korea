@@ -2,6 +2,7 @@
 
 from typing import final
 
+from pydantic import ValidationError
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,10 +15,15 @@ from grantcompass.domain.enums import ReviewStatus
 from grantcompass.domain.ids import AssessmentId
 from grantcompass.domain.json_types import FrozenJsonObject
 from grantcompass.domain.reviews import AssessmentReview, AssessmentReviewCommand
+from grantcompass.storage.audit_chain import validate_assessment_after_state
 from grantcompass.storage.audit_json import (
     audit_event_from_row,
     dump_audit_json,
     validate_attribution,
+)
+from grantcompass.storage.audit_schemas import (
+    AssessmentAuditState,
+    parse_assessment_audit_state,
 )
 from grantcompass.storage.read_scope import RepositoryReadScope
 from grantcompass.storage.review_builders import (
@@ -49,6 +55,11 @@ class AssessmentRepository:
                 raise AuditValidationError(AuditErrorCode.ASSESSMENT_NOT_FOUND)
             original_status = parse_review_status(assessment.review_status)
             observed_revision = _validated_review_revision(assessment.review_revision)
+            persisted_revision = await self._session.scalar(
+                select(AssessmentRow.review_revision).where(AssessmentRow.id == assessment.id)
+            )
+            if persisted_revision != observed_revision:
+                raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
             next_revision = observed_revision + 1
             conditions = tuple(
                 (
@@ -84,8 +95,15 @@ class AssessmentRepository:
             before = (
                 automatic_review_snapshot(review, original_status, observed_revision)
                 if prior is None
-                else prior
+                else prior[0]
             )
+            if prior is not None:
+                validate_assessment_after_state(
+                    prior[1],
+                    review,
+                    original_status,
+                    observed_revision,
+                )
             updated_id = await self._session.scalar(
                 update(AssessmentRow)
                 .where(
@@ -127,8 +145,8 @@ class AssessmentRepository:
                     .where(
                         AuditEventRow.entity_id == str(int(assessment_id)),
                         or_(
+                            AuditEventRow.action == "review",
                             AuditEventRow.entity_type == "assessment",
-                            AuditEventRow.entity_type.not_in(("assessment", "case")),
                         ),
                     )
                     .order_by(AuditEventRow.id)
@@ -136,14 +154,17 @@ class AssessmentRepository:
             ).all()
             return tuple(audit_event_from_row(row) for row in rows)
 
-    async def _latest_audit_after(self, assessment_id: AssessmentId) -> FrozenJsonObject | None:
+    async def _latest_audit_after(
+        self,
+        assessment_id: AssessmentId,
+    ) -> tuple[FrozenJsonObject, AssessmentAuditState] | None:
         row = await self._session.scalar(
             select(AuditEventRow)
             .where(
                 AuditEventRow.entity_id == str(int(assessment_id)),
                 or_(
+                    AuditEventRow.action == "review",
                     AuditEventRow.entity_type == "assessment",
-                    AuditEventRow.entity_type.not_in(("assessment", "case")),
                 ),
             )
             .order_by(AuditEventRow.id.desc())
@@ -154,7 +175,11 @@ class AssessmentRepository:
         event = audit_event_from_row(row)
         if event.after_json is None:
             raise AuditValidationError(AuditErrorCode.MALFORMED_AUDIT)
-        return event.after_json
+        try:
+            state = parse_assessment_audit_state(dump_audit_json(event.after_json))
+        except ValidationError:
+            raise AuditValidationError(AuditErrorCode.MALFORMED_AUDIT) from None
+        return event.after_json, state
 
 
 def _validated_review_revision(value: int) -> int:

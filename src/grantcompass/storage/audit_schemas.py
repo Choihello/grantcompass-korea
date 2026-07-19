@@ -121,3 +121,13 @@ def validate_audit_state(value: str, kind: AuditStateKind) -> None:
             _ = _ASSESSMENT_ADAPTER.validate_json(value, strict=True)
         case _:
             assert_never(kind)
+
+
+def parse_assessment_audit_state(value: str) -> AssessmentAuditState:
+    """Parse one strict assessment audit state for semantic chain checks."""
+    return _ASSESSMENT_ADAPTER.validate_json(value, strict=True)
+
+
+def parse_case_audit_state(value: str) -> CaseAuditState:
+    """Parse one strict case audit state for semantic chain checks."""
+    return _CASE_ADAPTER.validate_json(value, strict=True)

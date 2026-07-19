@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from grantcompass.cli.assessment_store import persist_assessments
 from grantcompass.cli.profiles import ProfileRepository
 from grantcompass.cli.program_queries import ProgramQueryRepository
+from grantcompass.domain.json_types import FrozenJsonObject
+from grantcompass.domain.reviews import AssessmentReviewCommand
 from grantcompass.rules.deterministic import DeterministicAssessmentEngine
+from grantcompass.storage.repositories import AssessmentRepository
 from grantcompass.storage.table_eligibility import RuleAssessmentRow
 from tests.integration.task12_fixtures import (
     REFERENCE_TIME,
@@ -46,14 +47,33 @@ async def test_personal_persistence_retains_condition_error_id(
     assert row.error_id == assessment.items[0].error_id
 
 
-def test_cli_persistence_module_contains_no_row_storage_implementation() -> None:
-    # Given: the CLI adapter and shared storage implementation source files.
-    cli_source = Path("src/grantcompass/cli/assessment_store.py").read_text(encoding="utf-8")
+async def test_personal_persistence_and_review_share_error_context(
+    db_session: AsyncSession,
+) -> None:
+    # Given: the personal persistence caller stores an assessment with a missing fact error.
+    program = await seed_program(db_session)
+    _ = await seed_rule(db_session, program)
+    profile_row = await seed_profile(db_session)
+    profile_row.regions_json = "[]"
+    await db_session.commit()
+    profile = await ProfileRepository(db_session).resolve(str(profile_row.id))
+    record = (await ProgramQueryRepository(db_session).list_program_rules())[0]
+    assessment = DeterministicAssessmentEngine().assess(profile, record.rules, REFERENCE_TIME)
 
-    # When: the CLI adapter is inspected for duplicated ORM behavior.
-    duplicated_rows = tuple(
-        token for token in ("AssessmentRow(", "RuleAssessmentRow(") if token in cli_source
+    # When: the shared durable result is consumed by the institutional review repository.
+    persisted = await persist_assessments(db_session, (assessment,))
+    persisted_id = persisted[0].id
+    assert persisted_id is not None
+    review = await AssessmentRepository(db_session).review(
+        AssessmentReviewCommand(persisted_id, (), "actor", "reason", REFERENCE_TIME)
     )
+    event = (await AssessmentRepository(db_session).audit_events(persisted_id))[0]
 
-    # Then: the CLI delegates instead of owning a second persistence implementation.
-    assert duplicated_rows == ()
+    # Then: the shared row and audit state retain the same machine error identity.
+    assert review.conditions[0].error_id == assessment.items[0].error_id
+    assert event.after_json is not None
+    conditions = event.after_json["automatic_conditions"]
+    assert isinstance(conditions, tuple)
+    condition = conditions[0]
+    assert isinstance(condition, FrozenJsonObject)
+    assert condition["error_id"] == assessment.items[0].error_id
