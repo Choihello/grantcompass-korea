@@ -46,13 +46,17 @@ class CaseRepository:
             row = await self._session.get(CaseRow, int(command.case_id))
             if row is None:
                 raise AuditValidationError(AuditErrorCode.CASE_NOT_FOUND)
-            before_stage = _case_stage(row.stage)
-            if command.stage not in _next_stages(before_stage):
-                raise AuditValidationError(AuditErrorCode.INVALID_TRANSITION)
             persisted_stage = await self._session.scalar(
                 select(CaseRow.stage).where(CaseRow.id == row.id)
             )
-            if persisted_stage != before_stage.value:
+            if persisted_stage != row.stage:
+                raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
+            before_stage = _case_stage(row.stage)
+            if command.stage not in _next_stages(before_stage):
+                raise AuditValidationError(AuditErrorCode.INVALID_TRANSITION)
+            await self._session.refresh(row)
+            refreshed_stage = _case_stage(row.stage)
+            if refreshed_stage is not before_stage:
                 raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
             prior = await self._latest_audit_after(command.case_id)
             if prior is not None:
@@ -60,7 +64,13 @@ class CaseRepository:
             before = _case_snapshot(row, before_stage, row.updated_at)
             updated_id = await self._session.scalar(
                 update(CaseRow)
-                .where(CaseRow.id == row.id, CaseRow.stage == before_stage.value)
+                .where(
+                    CaseRow.id == row.id,
+                    CaseRow.stage == before_stage.value,
+                    CaseRow.assignee_name == row.assignee_name,
+                    CaseRow.note == row.note,
+                    CaseRow.updated_at == row.updated_at,
+                )
                 .values(stage=command.stage.value, updated_at=command.occurred_at)
                 .returning(CaseRow.id)
             )
@@ -104,6 +114,7 @@ class CaseRepository:
                             AuditEventRow.entity_type == "case",
                         ),
                     )
+                    .execution_options(populate_existing=True)
                     .order_by(AuditEventRow.id)
                 )
             ).all()
@@ -122,6 +133,7 @@ class CaseRepository:
                     AuditEventRow.entity_type == "case",
                 ),
             )
+            .execution_options(populate_existing=True)
             .order_by(AuditEventRow.id.desc())
             .limit(1)
         )

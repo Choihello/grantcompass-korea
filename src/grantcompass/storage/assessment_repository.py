@@ -53,13 +53,16 @@ class AssessmentRepository:
             assessment = await self._session.get(AssessmentRow, int(command.assessment_id))
             if assessment is None:
                 raise AuditValidationError(AuditErrorCode.ASSESSMENT_NOT_FOUND)
-            original_status = parse_review_status(assessment.review_status)
             observed_revision = _validated_review_revision(assessment.review_revision)
             persisted_revision = await self._session.scalar(
                 select(AssessmentRow.review_revision).where(AssessmentRow.id == assessment.id)
             )
             if persisted_revision != observed_revision:
                 raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
+            await self._session.refresh(assessment)
+            if _validated_review_revision(assessment.review_revision) != observed_revision:
+                raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
+            original_status = parse_review_status(assessment.review_status)
             next_revision = observed_revision + 1
             conditions = tuple(
                 (
@@ -67,6 +70,7 @@ class AssessmentRepository:
                         select(RuleAssessmentRow)
                         .where(RuleAssessmentRow.assessment_id == assessment.id)
                         .order_by(RuleAssessmentRow.id)
+                        .execution_options(populate_existing=True)
                     )
                 ).all()
             )
@@ -75,7 +79,9 @@ class AssessmentRepository:
                 tuple(
                     (
                         await self._session.scalars(
-                            select(RuleAssessmentRow).where(RuleAssessmentRow.id.in_(requested_ids))
+                            select(RuleAssessmentRow)
+                            .where(RuleAssessmentRow.id.in_(requested_ids))
+                            .execution_options(populate_existing=True)
                         )
                     ).all()
                 )
@@ -149,6 +155,7 @@ class AssessmentRepository:
                             AuditEventRow.entity_type == "assessment",
                         ),
                     )
+                    .execution_options(populate_existing=True)
                     .order_by(AuditEventRow.id)
                 )
             ).all()
@@ -167,6 +174,7 @@ class AssessmentRepository:
                     AuditEventRow.entity_type == "assessment",
                 ),
             )
+            .execution_options(populate_existing=True)
             .order_by(AuditEventRow.id.desc())
             .limit(1)
         )
