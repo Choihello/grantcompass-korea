@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}관리기업 · GrantCompass{% endblock %}
+{% block content %}
+<header class="page-head"><div><div class="kicker">Managed company ledger</div><h1>관리기업 대장</h1><p class="muted">비활성 기업도 숨기지 않고 상담 사건과 함께 보존합니다.</p></div></header>
+<h2>전체 기업 <span class="muted">{{ companies|length }}개</span></h2>
+<table class="ledger"><thead><tr><th>기업명</th><th>담당 소유자</th><th>관리 상태</th><th>상담 사건</th></tr></thead><tbody>
+{% for item in companies %}<tr><td><strong>{{ item.profile_name }}</strong></td><td>{{ item.owner_name }}</td><td><span class="badge {{ 'fresh' if item.active else '' }}">{{ "active" if item.active else "inactive" }}</span></td><td>{% if item.case_id %}<a href="/cases/{{ item.case_id }}">CASE {{ item.case_id }} · {{ item.case_stage }}</a>{% else %}<span class="muted">사건 없음</span>{% endif %}</td></tr>{% else %}<tr><td colspan="4" class="empty">관리기업이 없습니다.</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

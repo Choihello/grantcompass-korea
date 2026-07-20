@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page { size: A4; margin: 18mm 16mm 18mm; @bottom-right { content: "GrantCompass · " counter(page) "/" counter(pages); color: #69717d; font-size: 8pt; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #142131; font-family: "Malgun Gothic", "Noto Sans CJK KR", sans-serif; font-size: 9.5pt; line-height: 1.58; }
+    header { border-top: 8px solid #102a43; border-bottom: 1px solid #102a43; padding: 13px 0 11px; }
+    .eyebrow { color: #c23b22; font-size: 8pt; font-weight: 700; letter-spacing: .14em; }
+    h1 { margin: 5px 0 2px; color: #102a43; font-size: 23pt; line-height: 1.25; }
+    h2 { margin: 20px 0 8px; border-bottom: 2px solid #102a43; padding-bottom: 5px; color: #102a43; font-size: 12pt; }
+    .meta { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #c8ced3; margin-top: 13px; }
+    .meta div { padding: 8px 10px; border-bottom: 1px solid #e3e5e7; }
+    .meta strong { display: block; color: #596573; font-size: 7.5pt; letter-spacing: .06em; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th { background: #edf0f2; color: #102a43; text-align: left; font-size: 8pt; }
+    th, td { border: 1px solid #c8ced3; padding: 7px; vertical-align: top; overflow-wrap: anywhere; }
+    .status { color: #c23b22; font-weight: 700; }
+    .location { color: #3b5268; font-size: 8.5pt; }
+    .audit { break-inside: avoid; border-left: 3px solid #c23b22; margin: 8px 0; padding: 3px 0 3px 10px; }
+    .audit p { margin: 2px 0; }
+    .audit .location { overflow-wrap: anywhere; word-break: break-all; }
+    .empty { border: 1px dashed #b6bcc2; padding: 10px; color: #69717d; }
+    a { color: #183f61; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">INSTITUTION CONSULTATION DOSSIER · CASE {{ report.case_id }}</div>
+    <h1>{{ report.program_title }}</h1>
+    <div>{{ report.company_name }} · 담당 {{ report.assignee }}</div>
+  </header>
+  <section class="meta">
+    <div><strong>상담 단계</strong><span class="status">{{ report.case_stage }}</span></div>
+    <div><strong>자동 결과 / 검토 상태</strong>{{ report.automatic_result }} / {{ report.review_status }}</div>
+    <div><strong>판정시각</strong>{{ report.assessed_at }}</div>
+    <div><strong>규칙 버전</strong>{{ report.rule_version }}</div>
+    <div><strong>상담 메모</strong>{{ report.case_note }}</div>
+    <div><strong>검토자 / 수정 사유</strong>아래 감사 이력 참조</div>
+  </section>
+  <h2>공식 출처 · 출처 신선도</h2>
+  <table>
+    <thead><tr><th style="width:16%">출처</th><th>원문</th><th style="width:24%">수집시각</th><th style="width:14%">신선도</th></tr></thead>
+    <tbody>
+    {% for source in report.sources %}
+      <tr><td>{{ source.source }}</td><td>{{ source.detail_url }}</td><td>{{ source.collected_at }}</td><td class="status">{{ source.freshness }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h2>조건별 근거</h2>
+  {% if report.conditions %}
+  <table>
+    <thead><tr><th style="width:15%">자동 상태</th><th>판정 설명</th><th style="width:42%">문서 위치</th></tr></thead>
+    <tbody>
+    {% for item in report.conditions %}
+      <tr><td class="status">{{ item.status }}</td><td>{{ item.explanation }}</td><td class="location">{{ item.source_url or "근거 없음" }}{% if item.page %} · p.{{ item.page }}{% endif %}{% if item.section_path %} · {{ item.section_path }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="empty">조건 판정 근거가 아직 생성되지 않았습니다.</div>{% endif %}
+  <h2>불변 감사 이력 · 검토자 · 수정 사유</h2>
+  {% for event in report.audit %}
+  <article class="audit">
+    <strong>{{ event.occurred_at }} · {{ event.actor }} · {{ event.action }}</strong>
+    <p>수정 사유: {{ event.reason }}</p>
+    <p class="location">변경 전 {{ event.before_state }}<br>변경 후 {{ event.after_state }}</p>
+  </article>
+  {% else %}<div class="empty">기록된 수정 이력이 없습니다.</div>{% endfor %}
+</body>
+</html>

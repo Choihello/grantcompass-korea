@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ program.title }} · GrantCompass{% endblock %}
+{% block content %}
+<header class="page-head"><div><div class="kicker">Program dossier · No. {{ program.id }}</div><h1>{{ program.title }}</h1><p>{{ program.organization }}</p></div><a class="button secondary" href="/programs">공고대장으로</a></header>
+<section class="facts"><div class="fact"><small>접수 시작</small><strong>{{ program.application_start or "미정" }}</strong></div><div class="fact"><small>접수 마감</small><strong>{{ program.application_end or "미정" }}</strong></div><div class="fact"><small>공식 출처</small><strong>{{ program.notices|length }}개</strong></div><div class="fact"><small>검토 조건</small><strong>{{ program.evidence|length }}건</strong></div></section>
+<h2>공식 출처와 문서 상태</h2>
+<table class="ledger"><thead><tr><th>출처</th><th>원문 링크</th><th>수집시각</th><th>문서 처리</th></tr></thead><tbody>
+{% for source in program.notices %}<tr><td><span class="badge">{{ source.source }}</span></td><td class="mono"><a href="{{ source.detail_url }}" rel="noreferrer">{{ source.detail_url }}</a></td><td>{{ source.collected_at }}</td><td>{% for file in program.attachments %}<span class="badge {{ file.parse_status }}">{{ file.filename }} · {{ file.parse_status }}</span>{% else %}<span class="muted">첨부 없음</span>{% endfor %}</td></tr>{% endfor %}
+</tbody></table>
+<h2>조건별 상태와 문서 위치</h2>
+<table class="ledger"><thead><tr><th>조건</th><th>자동/검토 상태</th><th>규칙 버전</th><th>문서 위치</th></tr></thead><tbody>
+{% for item in program.evidence %}<tr><td>{{ item.kind }}</td><td>{{ item.review_status }}</td><td class="mono">{{ item.rule_version }}</td><td class="mono">{{ item.source_url or "근거 없음" }}{% if item.page %} · p.{{ item.page }}{% endif %}{% if item.section_path %} · {{ item.section_path }}{% endif %}</td></tr>{% else %}<tr><td colspan="4" class="empty">분석된 조건이 없습니다.</td></tr>{% endfor %}
+</tbody></table>
+<h2>역매칭</h2>
+<form class="action-strip" action="/programs/{{ program.id }}/reverse-match" method="post"><div><label for="actor">실행자</label><input id="actor" name="actor" required></div><div><label for="reason">실행 사유</label><input id="reason" name="reason" required></div><button type="submit">전체 기업 역매칭</button></form>
+<table class="ledger"><thead><tr><th>기업</th><th>자동 결과</th><th>검토 상태</th><th>검토 작업</th></tr></thead><tbody>
+{% for item in program.matches %}<tr><td>{{ item.company_name }}</td><td><span class="badge">{{ item.final_status }}</span></td><td>{{ item.review_status }}</td><td><form class="stack" action="/assessments/{{ item.assessment_id }}/review" method="post"><input name="status" type="hidden" value="{{ item.final_status }}"><input name="actor" aria-label="검토자" placeholder="검토자" required><input name="reason" aria-label="수정 사유" placeholder="수정 사유" required><button type="submit">판정 확인</button></form></td></tr>{% else %}<tr><td colspan="4" class="empty">역매칭을 실행하면 모든 관리기업 결과가 표시됩니다.</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

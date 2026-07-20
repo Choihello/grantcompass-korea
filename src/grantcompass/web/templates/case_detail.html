@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}CASE {{ report.case_id }} · GrantCompass{% endblock %}
+{% block content %}
+<header class="page-head"><div><div class="kicker">Consultation dossier · Case {{ report.case_id }}</div><h1>{{ report.company_name }}</h1><p>{{ report.program_title }}</p></div><a class="button" href="/cases/{{ report.case_id }}/report.pdf">PDF 상담보고서</a></header>
+<section class="facts"><div class="fact"><small>상담 단계</small><strong>{{ report.case_stage }}</strong></div><div class="fact"><small>담당자</small><strong>{{ report.assignee }}</strong></div><div class="fact"><small>자동 결과 / 검토</small><strong>{{ report.automatic_result }} / {{ report.review_status }}</strong></div><div class="fact"><small>규칙 버전</small><strong>{{ report.rule_version }}</strong></div></section>
+<h2>상담 단계 변경</h2>
+<form class="action-strip" action="/cases/{{ report.case_id }}/transition" method="post"><div><label for="stage">다음 단계</label><select id="stage" name="stage">{% for stage in stages %}<option value="{{ stage.value }}">{{ stage.value }}</option>{% endfor %}</select></div><div><label for="actor">처리자</label><input id="actor" name="actor" required></div><div><label for="reason">변경 사유</label><input id="reason" name="reason" required></div><button type="submit">단계 기록</button></form>
+<h2>공식 출처와 신선도</h2>
+<table class="ledger"><thead><tr><th>출처</th><th>원문</th><th>수집시각</th><th>신선도</th></tr></thead><tbody>{% for item in report.sources %}<tr><td>{{ item.source }}</td><td class="mono">{{ item.detail_url }}</td><td>{{ item.collected_at }}</td><td><span class="badge {{ item.freshness }}">{{ item.freshness }}</span></td></tr>{% endfor %}</tbody></table>
+<h2>조건별 근거</h2>
+<table class="ledger"><thead><tr><th>자동 상태</th><th>설명</th><th>문서 위치</th></tr></thead><tbody>{% for item in report.conditions %}<tr><td>{{ item.status }}</td><td>{{ item.explanation }}</td><td class="mono">{{ item.source_url or "근거 없음" }}{% if item.page %} · p.{{ item.page }}{% endif %}{% if item.section_path %} · {{ item.section_path }}{% endif %}</td></tr>{% else %}<tr><td colspan="3" class="empty">조건 근거가 아직 없습니다.</td></tr>{% endfor %}</tbody></table>
+<h2>불변 감사 이력</h2>
+{% for event in report.audit %}<article class="audit"><strong>{{ event.occurred_at }} · {{ event.actor }} · {{ event.action }}</strong><p>수정 사유: {{ event.reason }}</p><details><summary>변경 전후 값</summary><div class="mono">변경 전 {{ event.before_state }}<br>변경 후 {{ event.after_state }}</div></details></article>{% else %}<div class="empty">기록된 수정 이력이 없습니다.</div>{% endfor %}
+{% endblock %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}공고대장 · GrantCompass{% endblock %}
+{% block content %}
+<header class="page-head"><div><div class="kicker">Source review ledger</div><h1>공고 검토대장</h1><p class="muted">공식 출처의 신선도와 변경 이력을 한 장부에서 확인합니다.</p></div><a class="button" href="/programs/manual">기관 자체사업 등록</a></header>
+<h2>수집 공고 <span class="muted">{{ programs|length }}건</span></h2>
+<table class="ledger"><thead><tr><th>상태</th><th>사업명 / 주관기관</th><th>공식 출처</th><th>접수 마감</th><th>출처 신선도</th></tr></thead><tbody>
+{% for item in programs %}<tr><td>{% for badge in item.badges %}<span class="badge">{{ badge }}</span>{% else %}<span class="muted">-</span>{% endfor %}</td><td><a href="/programs/{{ item.id }}"><strong>{{ item.title }}</strong></a><br><span class="muted">{{ item.organization }}</span></td><td class="mono">{{ item.sources }}</td><td>{{ item.application_end or "미정" }}</td><td><span class="badge {{ item.freshness }}">{{ item.freshness }}</span></td></tr>
+{% else %}<tr><td colspan="5" class="empty">등록된 공고가 없습니다.</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

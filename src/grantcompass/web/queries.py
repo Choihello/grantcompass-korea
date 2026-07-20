@@ -1,0 +1,230 @@
+"""Read-only view queries for the institution workspace."""
+
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from grantcompass.storage.table_documents import EvidenceRow, rule_evidence
+from grantcompass.storage.table_eligibility import (
+    ApplicantProfileRow,
+    AssessmentRow,
+    EligibilityRuleRow,
+)
+from grantcompass.storage.table_notice_analysis import (
+    ChangeSetRow,
+    CurrentNoticeVersionRow,
+)
+from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow, ProgramRow
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramListEntry:
+    """One row in the public-notice review ledger."""
+
+    id: int
+    title: str
+    organization: str
+    application_end: date | None
+    sources: str
+    freshness: str
+    badges: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class NoticeEntry:
+    """One current official source retained for a program."""
+
+    source: str
+    detail_url: str
+    collected_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceEntry:
+    """One eligibility rule and exact official evidence coordinate."""
+
+    kind: str
+    review_status: str
+    rule_version: str
+    source_url: str | None
+    page: int | None
+    section_path: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class MatchEntry:
+    """One latest company assessment for a selected program."""
+
+    assessment_id: int
+    company_name: str
+    final_status: str
+    review_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramDetail:
+    """Complete read model for one program dossier."""
+
+    id: int
+    title: str
+    organization: str
+    application_start: date | None
+    application_end: date | None
+    notices: tuple[NoticeEntry, ...]
+    attachments: tuple[AttachmentRow, ...]
+    evidence: tuple[EvidenceEntry, ...]
+    matches: tuple[MatchEntry, ...]
+
+
+async def list_programs(
+    session: AsyncSession,
+    now: datetime,
+) -> tuple[ProgramListEntry, ...]:
+    """Return current programs with visible freshness and change badges."""
+    programs = (await session.scalars(select(ProgramRow).order_by(ProgramRow.id.desc()))).all()
+    entries: list[ProgramListEntry] = []
+    current = now.astimezone(UTC)
+    for program in programs:
+        notices = await _current_notices(session, program.id)
+        changed = await session.scalar(
+            select(ChangeSetRow.id)
+            .join(
+                CurrentNoticeVersionRow,
+                CurrentNoticeVersionRow.version_id == ChangeSetRow.current_version_id,
+            )
+            .join(
+                NoticeVersionRow,
+                NoticeVersionRow.id == CurrentNoticeVersionRow.version_id,
+            )
+            .where(NoticeVersionRow.program_id == program.id)
+            .limit(1)
+        )
+        latest = max((_as_utc(item.collected_at) for item in notices), default=None)
+        badges: list[str] = []
+        if current - _as_utc(program.created_at) <= timedelta(days=7):
+            badges.append("신규")
+        if changed is not None:
+            badges.append("변경")
+        if program.application_end is not None and program.application_end < current.date():
+            badges.append("종료")
+        entries.append(
+            ProgramListEntry(
+                id=program.id,
+                title=program.title,
+                organization=program.organization or "기관 미상",
+                application_end=program.application_end,
+                sources=" · ".join(item.source for item in notices) or "출처 없음",
+                freshness=(
+                    "fresh"
+                    if latest is not None and current - latest <= timedelta(hours=24)
+                    else "stale"
+                ),
+                badges=tuple(badges),
+            )
+        )
+    return tuple(entries)
+
+
+async def get_program_detail(session: AsyncSession, program_id: int) -> ProgramDetail | None:
+    """Return the evidence-first detail read model for one program."""
+    program = await session.get(ProgramRow, program_id)
+    if program is None:
+        return None
+    notices = await _current_notices(session, program.id)
+    notice_ids = tuple(item.id for item in notices)
+    attachments = (
+        tuple(
+            (
+                await session.scalars(
+                    select(AttachmentRow)
+                    .where(AttachmentRow.notice_version_id.in_(notice_ids))
+                    .order_by(AttachmentRow.id)
+                )
+            ).all()
+        )
+        if notice_ids
+        else ()
+    )
+    rules = (
+        await session.scalars(
+            select(EligibilityRuleRow)
+            .where(EligibilityRuleRow.program_id == program.id)
+            .order_by(EligibilityRuleRow.id)
+        )
+    ).all()
+    evidence_entries: list[EvidenceEntry] = []
+    for rule in rules:
+        evidence = await session.scalar(
+            select(EvidenceRow)
+            .join(rule_evidence, rule_evidence.c.evidence_id == EvidenceRow.id)
+            .where(rule_evidence.c.rule_id == rule.id)
+            .order_by(EvidenceRow.id)
+            .limit(1)
+        )
+        evidence_entries.append(
+            EvidenceEntry(
+                rule.kind,
+                rule.review_status,
+                rule.rule_version,
+                evidence.source_url if evidence else None,
+                evidence.page if evidence else None,
+                evidence.section_path if evidence else None,
+            )
+        )
+    assessments = (
+        await session.scalars(
+            select(AssessmentRow)
+            .where(AssessmentRow.program_id == program.id)
+            .order_by(AssessmentRow.id.desc())
+        )
+    ).all()
+    match_entries: list[MatchEntry] = []
+    for assessment in assessments:
+        profile = (
+            await session.scalars(
+                select(ApplicantProfileRow).where(ApplicantProfileRow.id == assessment.profile_id)
+            )
+        ).one()
+        match_entries.append(
+            MatchEntry(
+                assessment.id,
+                profile.display_name,
+                assessment.final_status,
+                assessment.review_status,
+            )
+        )
+    return ProgramDetail(
+        id=program.id,
+        title=program.title,
+        organization=program.organization or "기관 미상",
+        application_start=program.application_start,
+        application_end=program.application_end,
+        notices=tuple(
+            NoticeEntry(item.source, item.detail_url, item.collected_at) for item in notices
+        ),
+        attachments=attachments,
+        evidence=tuple(evidence_entries),
+        matches=tuple(match_entries),
+    )
+
+
+async def _current_notices(session: AsyncSession, program_id: int) -> tuple[NoticeVersionRow, ...]:
+    return tuple(
+        (
+            await session.scalars(
+                select(NoticeVersionRow)
+                .join(
+                    CurrentNoticeVersionRow,
+                    CurrentNoticeVersionRow.version_id == NoticeVersionRow.id,
+                )
+                .where(NoticeVersionRow.program_id == program_id)
+                .order_by(NoticeVersionRow.source, NoticeVersionRow.source_notice_id)
+            )
+        ).all()
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)

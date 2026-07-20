@@ -49,45 +49,53 @@ class NoticeIngestor:
     async def upsert(self, raw: RawNotice, collected_at: datetime) -> IngestResult:
         """Persist idempotently and atomically derive merge and change analysis."""
         async with self._session.begin():
-            context = IngestContext(raw=raw, collected_at=collected_at)
-            existing, current = await self._find_versions(raw)
-            if existing is not None and current is not None and existing.id == current.id:
-                return IngestResult(
-                    program_id=ProgramId(existing.program_id),
-                    notice_version_id=NoticeVersionId(existing.id),
-                    notice_version_created=False,
-                )
-            linked = current if current is not None else existing
-            program_id, created_program = await self._resolve_program(context, linked)
-            snapshot = NoticeSnapshot.from_raw(raw)
-            version = existing
-            if version is None:
-                version = await self._insert_version(
-                    VersionInsert(context=context, program_id=program_id, snapshot=snapshot)
-                )
-            await point_to_version(self._session, version)
-            analyzer = NoticeAnalyzer(self._session, collected_at)
-            if created_program:
-                await analyzer.record_merge_candidate(program_id, raw)
-            change_set = None
-            impacted_ids = ()
-            if current is not None:
-                change_set, impacted_ids = await analyzer.record_change(
-                    VersionTransition(
-                        program_id=program_id,
-                        previous=current,
-                        current=version,
-                        current_snapshot=snapshot,
-                    )
-                )
-            await analyzer.sync_conflicts(program_id)
+            return await self.upsert_in_transaction(raw, collected_at)
+
+    async def upsert_in_transaction(
+        self,
+        raw: RawNotice,
+        collected_at: datetime,
+    ) -> IngestResult:
+        """Persist one notice inside a transaction already owned by the caller."""
+        context = IngestContext(raw=raw, collected_at=collected_at)
+        existing, current = await self._find_versions(raw)
+        if existing is not None and current is not None and existing.id == current.id:
             return IngestResult(
-                program_id=program_id,
-                notice_version_id=NoticeVersionId(version.id),
-                notice_version_created=existing is None,
-                change_set=change_set,
-                impacted_assessment_ids=impacted_ids,
+                program_id=ProgramId(existing.program_id),
+                notice_version_id=NoticeVersionId(existing.id),
+                notice_version_created=False,
             )
+        linked = current if current is not None else existing
+        program_id, created_program = await self._resolve_program(context, linked)
+        snapshot = NoticeSnapshot.from_raw(raw)
+        version = existing
+        if version is None:
+            version = await self._insert_version(
+                VersionInsert(context=context, program_id=program_id, snapshot=snapshot)
+            )
+        await point_to_version(self._session, version)
+        analyzer = NoticeAnalyzer(self._session, collected_at)
+        if created_program:
+            await analyzer.record_merge_candidate(program_id, raw)
+        change_set = None
+        impacted_ids = ()
+        if current is not None:
+            change_set, impacted_ids = await analyzer.record_change(
+                VersionTransition(
+                    program_id=program_id,
+                    previous=current,
+                    current=version,
+                    current_snapshot=snapshot,
+                )
+            )
+        await analyzer.sync_conflicts(program_id)
+        return IngestResult(
+            program_id=program_id,
+            notice_version_id=NoticeVersionId(version.id),
+            notice_version_created=existing is None,
+            change_set=change_set,
+            impacted_assessment_ids=impacted_ids,
+        )
 
     async def _find_versions(
         self,

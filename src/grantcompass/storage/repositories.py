@@ -24,6 +24,7 @@ from grantcompass.domain.programs import (
 from grantcompass.domain.source_runs import SourceRunFailure, SourceRunId, SourceRunSuccess
 from grantcompass.storage.assessment_repository import AssessmentRepository
 from grantcompass.storage.case_repository import CaseRepository
+from grantcompass.storage.manual_notices import ManualNoticeCommand, create_manual_notice
 from grantcompass.storage.notice_ingest import NoticeIngestor
 from grantcompass.storage.notice_queries import (
     find_exact_program,
@@ -33,12 +34,14 @@ from grantcompass.storage.notice_queries import (
     read_notice_sources,
     read_program_view,
 )
-from grantcompass.storage.table_programs import (
-    NoticeVersionRow,
-    SourceRunRow,
-)
+from grantcompass.storage.table_programs import NoticeVersionRow, SourceRunRow
 
-__all__ = ["AssessmentRepository", "CaseRepository", "ProgramRepository"]
+__all__ = [
+    "AssessmentRepository",
+    "CaseRepository",
+    "ManualNoticeCommand",
+    "ProgramRepository",
+]
 
 _MAX_INGEST_ATTEMPTS = 3
 _RETRYABLE_SQLITE_INGEST_RACES = frozenset(
@@ -143,6 +146,10 @@ class ProgramRepository:
                     raise IngestRaceExhaustedError from None
                 await checkpoint()
         raise IngestRaceExhaustedError
+
+    async def create_manual_notice(self, command: ManualNoticeCommand) -> IngestResult:
+        """Create, parse, and attribute one manual notice atomically."""
+        return await create_manual_notice(self._session, command)
 
     async def find_merge_candidate(self, raw: RawNotice) -> ProgramId | None:
         """Return a merge target only for the exact conservative identity."""
