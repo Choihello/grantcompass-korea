@@ -21,6 +21,35 @@ If an API key may have been exposed:
 
 Report suspected personal-information exposure privately and identify the affected file, field, or endpoint without repeating the sensitive value. Maintainers will restrict access, preserve only non-sensitive diagnostic evidence, remove the data from distributed artifacts, and assess required notifications under applicable policy and law.
 
+Applicant profiles are a business-fact whitelist. Resident registration numbers, bank accounts,
+phone numbers, personal email fields, and all other undeclared fields are rejected. Do not place
+personal or secret values inside generic performance/history data, institution notes, filenames,
+screenshots, source fixtures, or reports. Distributed demo values must be conspicuously synthetic.
+
+## Trust boundaries
+
+Official-source responses, announcement text, HWPX/PDF content, OCR output, upload filenames, and
+URLs are untrusted data. They never authorize tools, imports, shell commands, URL visits, or prompt
+instructions. The application blocks XML DTD/entity expansion, unsafe archive paths, report HTML
+resource references, credential-bearing redirects, unsupported uploads, oversized content, and
+unbounded OCR/PDF work. Supported deterministic rule syntax may be recognized, but the surrounding
+text remains data.
+
+K-Startup `serviceKey` and 기업마당 `crtfcKey` query values are centrally redacted from standard
+HTTP request logs. Redaction is defense in depth: keep INFO request logs access-controlled and
+never intentionally log or paste credentials.
+
+## Deployment boundary
+
+Version 0.1 is self-hosted and has no built-in user authentication, authorization, TLS termination,
+backup service, or secret manager. Bind the web server to loopback by default. Any networked use
+must add an authenticated reverse proxy, TLS, host firewall rules, least-privilege file access, and
+tested SQLite/report/upload backup and recovery. Consultation reports and audit logs may reveal
+private business facts even when profiles contain no direct personal fields.
+
+`/health/failures` is an operator diagnostic endpoint. Do not expose it publicly; monitor that its
+`hidden_failures` list remains empty and investigate every visible stable error ID.
+
 ## Supported versions
 
-Until the first stable release, security fixes are provided only on the latest 0.1 development line.
+Security fixes are provided only on the latest 0.1.x release line.

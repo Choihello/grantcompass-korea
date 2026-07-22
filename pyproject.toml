@@ -89,6 +89,15 @@ filterwarnings = ["error"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+extend-exclude = [
+    ".omo",
+    ".playwright-cli",
+    ".pytest-*",
+    ".superpowers",
+    ".task*",
+    "task*",
+    "tmp*",
+]
 
 [tool.ruff.lint]
 select = ["ALL"]

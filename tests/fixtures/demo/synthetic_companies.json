@@ -1,0 +1,31 @@
+[
+  {
+    "display_name": "명백한합성기업-가상1호",
+    "founded_on": "2025-01-01",
+    "regions": ["서울"],
+    "representative_birth_year": 1990,
+    "industries": ["software"],
+    "performance": {"2025_revenue_krw": 0},
+    "benefit_history": []
+  },
+  {
+    "display_name": "명백한합성기업-가상2호",
+    "founded_on": "2023-06-15",
+    "regions": ["부산"],
+    "representative_birth_year": 1988,
+    "industries": ["design"],
+    "performance": {"2025_revenue_krw": 12340000},
+    "benefit_history": [
+      {"program": "명백한 합성 지원기관의 가상사업", "received_on": "2024-02-01"}
+    ]
+  },
+  {
+    "display_name": "명백한합성기업-검토필요3호",
+    "founded_on": null,
+    "regions": [],
+    "representative_birth_year": null,
+    "industries": [],
+    "performance": {},
+    "benefit_history": []
+  }
+]

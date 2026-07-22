@@ -4,7 +4,13 @@ from datetime import UTC
 from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from pydantic import ValidationError
 from sqlalchemy.exc import NoResultFound
 
@@ -25,6 +31,7 @@ from grantcompass.storage.repositories import (
 )
 from grantcompass.storage.table_eligibility import AssessmentRow
 from grantcompass.web.company_queries import list_companies
+from grantcompass.web.failures import FailureHealth, load_failure_snapshot
 from grantcompass.web.forms import (
     AttributionForm,
     TransitionForm,
@@ -58,6 +65,31 @@ async def programs(request: Request) -> Response:
         request=request,
         name="programs.html",
         context={"programs": entries},
+    )
+
+
+@router.get("/programs/failure-scenario")
+async def failure_scenario(request: Request) -> Response:
+    """Render every supported failure detected from persisted domain state."""
+    runtime = active_runtime()
+    async with runtime.session_factory() as session:
+        snapshot = await load_failure_snapshot(session)
+    return runtime.templates.TemplateResponse(
+        request=request,
+        name="failure_scenario.html",
+        context={"snapshot": snapshot},
+    )
+
+
+@router.get("/health/failures", response_class=JSONResponse)
+async def failure_health() -> FailureHealth:
+    """Return stable visible failure IDs and the hidden-failure audit list."""
+    runtime = active_runtime()
+    async with runtime.session_factory() as session:
+        snapshot = await load_failure_snapshot(session)
+    return FailureHealth(
+        visible_failure_ids=snapshot.visible_failure_ids,
+        hidden_failures=snapshot.hidden_failures,
     )
 
 

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}실패 상태 · GrantCompass{% endblock %}
+{% block content %}
+<header class="page-head"><div><div class="kicker">Failure visibility</div><h1>운영 실패 상태</h1><p class="muted">저장된 출처·문서·공고·프로필 상태에서 감지한 조치 필요 항목입니다.</p></div><a class="button secondary" href="/programs">공고대장으로</a></header>
+<table class="ledger"><thead><tr><th>오류 ID</th><th>상태</th><th>다음 확인</th></tr></thead><tbody>
+{% for item in snapshot.entries %}<tr><td class="mono">{{ item.id }}</td><td><strong>{{ item.title }}</strong></td><td>{{ item.guidance }}</td></tr>
+{% else %}<tr><td colspan="3" class="empty">현재 감지된 실패 상태가 없습니다.</td></tr>{% endfor %}
+</tbody></table>
+<p class="muted mono">hidden_failures={{ snapshot.hidden_failures|length }}</p>
+{% endblock %}

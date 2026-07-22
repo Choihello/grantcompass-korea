@@ -30,6 +30,32 @@ Fixtures must be synthetic, redistributable, and free of API keys, personal info
 
 Synthetic organizations and people must use conspicuously fictional values that do not resemble real entities. Review staged changes for secrets and personal data before every commit.
 
+Treat announcement text, document text, HTML, XML, URLs, and OCR output as untrusted data. A
+fixture must not require network access, execute embedded instructions, resolve an external XML
+entity, or fetch an HTML/PDF resource. Use `example.invalid`, stable fixture timestamps, and
+non-personal role labels. Validate demo profile JSON through `ApplicantProfile`, not a parallel
+fixture-only schema.
+
+## Source contract changes
+
+Update the matching file under `docs/sources/` whenever an endpoint, operation, parameter, response
+shape, credential destination, redirect policy, or official modification date changes. Record the
+official URL and review date. Add saved fictional transport fixtures and contract tests without
+copying a live response or credential. Source errors must remain distinguishable from a genuine
+empty result and previously collected data must remain visible as stale.
+
+## Tests and commits
+
+Tests use one observable When and explicit Given/When/Then blocks. New behavior starts with a test
+that fails for the intended missing behavior, followed by the smallest passing implementation.
+Exercise async boundaries with AnyIO and real temporary SQLite repositories; do not import
+`asyncio` directly or replace a repository test with mock call-count assertions.
+
+Keep each commit independently reviewable: tests and implementation for one behavior, no generated
+cache or unrelated cleanup, and no mixed formatting of untouched files. Before committing, inspect
+the exact staged paths and run the complete quality gate above plus the relevant manual CLI or web
+surface.
+
 ## Dependency and license review
 
 For every dependency or external asset, record its source, license, purpose, version constraint, and redistribution obligations. Do not merge material with an unknown or incompatible license. Update notices or attribution files when required and ask a maintainer for review when compatibility is uncertain.

@@ -44,11 +44,10 @@ adapter rejects userinfo, non-default ports, query, fragment, other hosts, and o
 before storing the client or key. Redirect following is disabled for each request and every
 3xx response is a stable source failure.
 
-The official API requires `serviceKey` in the query. Standard httpx2 INFO request logs may
-therefore render the credential-bearing URL. Before a public release, Task 14 must add and
-test centralized, concurrency-safe `serviceKey` query redaction. Temporary logger-level
-mutation around requests is prohibited; deployments must not enable credential-bearing
-httpx2 request INFO logs until that gate is complete.
+The official API requires `serviceKey` in the query. A centralized, stateless httpx2 log filter
+redacts `serviceKey` and 기업마당 `crtfcKey` values without temporarily changing the process-wide
+logger level. Concurrent credential-bearing request logs are covered by a regression test.
+Deployments must still restrict log access and never intentionally record credentials.
 
 ## Retired predecessor
 
