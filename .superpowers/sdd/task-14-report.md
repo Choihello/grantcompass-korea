@@ -186,3 +186,105 @@ under that environment's `Lib/site-packages/grantcompass/skills/grantcompass-kor
   lacks the native library. No PDF render success is claimed.
 
 No tag was created. Unrelated Task 9 and scratch artifacts remained uncommitted.
+
+## Final fix wave — authoritative commit C
+
+Functional commit C is `15879c453d7ee855c05ca3e70b99c608c1ee037d` with tree
+`6c500aae8ced3903e594605a3952262a2dc9da49`. Its subject is
+`fix: expose persisted hidden failure inventory`. The final commit D changes only this report,
+`docs/qa/manual-qa.md`, and the two fresh browser captures under `docs/assets/`; D contains no
+code, tests, package configuration, or built-artifact inputs.
+
+### Production hidden-failure inventory
+
+The health inventory now audits the latest persisted source run per source, review-required
+attachment parse errors, all field conflicts, rule-assessment error IDs, and incomplete profiles.
+Recognized states retain the fixed visible catalog order. Unrecognized persisted candidates are
+deduplicated and deterministically sorted under this stable naming contract:
+
+- `source_run:<source>:<error_code>`
+- `attachment_parse:<error_code>`
+- `field_conflict:<field_name>`
+- `rule_assessment:<error_id>`
+
+Safe tokens are case-folded ASCII. Unsafe values become a non-reversible
+`opaque-<12-character-sha256-prefix>` token, preventing arbitrary persisted text from becoming a
+health identifier.
+
+Tests persist and retrieve a non-503 source failure, duplicate attachment errors, a non-deadline
+field conflict, and a rule-assessment error. The duplicate is collapsed and the exact hidden
+order is asserted. A latest 503 without retained same-source success data is hidden as
+`source_run:kstartup:http_503`, never mislabeled stale.
+
+### Finite WeasyPrint preflight
+
+The production `probe_weasyprint_module` preflight has a five-second default hard timeout around
+the blocking import. A blocked import raises `TimeoutError`; native-loader classification sees
+stderr only after the probe actually completes. Tests cover both the finite timeout and an
+immediate recognized native-loader diagnostic. The real-host integration check uses this same
+production probe.
+
+### Final TDD and verification
+
+The final fix set was first captured RED:
+
+```text
+4 failed, 9 passed, 1 skipped in 2.27s
+```
+
+The failures were the first-run 503 hidden inventory, persisted hidden inventory, missing finite
+timeout probe, and missing immediate probe behavior. The same set then passed GREEN:
+
+```text
+13 passed, 1 skipped in 1.93s
+```
+
+Authoritative immutable-C verification:
+
+- Focused Task 14 gate: 29 passed, 1 skipped in 3.60 seconds.
+- Full suite/JUnit: 561 passed, 1 skipped in 138.74 seconds; 562 tests, zero failures,
+  zero errors, one skip.
+- Sole skip: the recognized native WeasyPrint loader condition at
+  `tests/integration/test_real_weasyprint_runtime.py:25`.
+- Ruff lint passed; Ruff format reported 208 files already formatted.
+- basedpyright: 0 errors, 0 warnings, 0 notes.
+- `uv lock --check`: 71 packages without lockfile change.
+- Benchmarks: 6 passed in 14.60 seconds; exactly 30 document and 100 assessment cases.
+- Every changed production/test file is below 250 pure lines; `git diff --check` passed.
+
+### Final artifacts
+
+The single authoritative commit-C artifact hash set is:
+
+- wheel `f11223f5964031fc96416d90303c36b48a2f0c906bbc47a78765e1e80944a013`
+- sdist `f6de5dfd1315401f2f59544a11e72cfc270fb13ecca78e96f4828292bb12383c`
+
+Direct inspection found `grantcompass/skills/grantcompass-korea/SKILL.md` and
+`grantcompass/skills/grantcompass-korea/agents/openai.yaml` in the wheel and their corresponding
+`grantcompass_korea-0.1.0/skills/` members in the sdist. Every earlier artifact hash in this report
+— initial release hashes and commit-A hashes alike — is historical and explicitly superseded by
+the commit-C pair above.
+
+### Final manual QA
+
+Fresh live Uvicorn reads at C produced:
+
+```json
+{"visible_failure_ids":["source_503_stale","scan_pdf_ocr_required","conflicting_deadlines","incomplete_profile_needs_review"],"hidden_failures":["attachment_parse:encrypted_pdf","field_conflict:organization","rule_assessment:unsupported_rule_kind","source_run:bizinfo:rate_limited"]}
+```
+
+Two mixed-state requests were byte-identical. A visible-only database returned the four visible
+IDs with no hidden failures, and a clean database returned two empty arrays.
+
+A real Chromium session at C ran all-company matching as `합성 C 기관담당자` for
+`합성 C 전체기업 재검토`, saved a conditional review with reason
+`합성 C 증빙 재확인 필요`, and transitioned the case to `contacted` as
+`합성 C 상담담당자` for `합성 C 상담 완료`. The case showed p.1 eligibility evidence and both
+immutable reasons. Fresh commit-C screenshots replace the stale prior captures:
+
+- `docs/assets/institution-workspace.png`, SHA-256
+  `6324809afae4953dc23ca2bc9ed201e7073d8ee39e3632b750062d1761d254cd`
+- `docs/assets/failure-scenarios.png`, SHA-256
+  `9bfe0fddea442d81c4984d544673aad4bd9644200ec5e95dcfacc9af6b10cc97`
+
+No tag was created. Unrelated Task 9 and scratch artifacts remained uncommitted.

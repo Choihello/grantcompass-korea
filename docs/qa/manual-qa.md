@@ -2,7 +2,73 @@
 
 Date: 2026-07-22 (Asia/Seoul)
 
-## Build under test
+## Authoritative final build under test
+
+- Functional commit C: `15879c453d7ee855c05ca3e70b99c608c1ee037d`
+- Commit C tree: `6c500aae8ced3903e594605a3952262a2dc9da49`
+- Commit C subject: `fix: expose persisted hidden failure inventory`
+- The final follow-up commit D changes only this QA record,
+  `.superpowers/sdd/task-14-report.md`, and the two browser captures under `docs/assets/`.
+  It contains no executable code, tests, package inputs, or built-artifact inputs.
+- Host: Windows, Python 3.12.10, uv 0.11.28.
+- Data: saved official-source transport fixtures and conspicuously synthetic applicant data.
+- Credentials: no live API key was used.
+
+### Final C persisted-failure QA
+
+A fresh local Uvicorn server backed by persisted synthetic rows returned HTTP 200 from
+`/health/failures`. Two reads were byte-identical. The exact response was:
+
+```json
+{"visible_failure_ids":["source_503_stale","scan_pdf_ocr_required","conflicting_deadlines","incomplete_profile_needs_review"],"hidden_failures":["attachment_parse:encrypted_pdf","field_conflict:organization","rule_assessment:unsupported_rule_kind","source_run:bizinfo:rate_limited"]}
+```
+
+A second persisted database containing only the recognized scenarios returned the same four
+visible IDs and an empty `hidden_failures` array. A fresh empty database returned both arrays
+empty. This proves the live mixed, visible-only, and clean production surfaces.
+
+The browser page `/programs/failure-scenario` showed the four visible IDs and
+`hidden_failures=4`. The fresh commit-C capture is
+[failure-scenarios.png](../assets/failure-scenarios.png), 1036 × 815 pixels, SHA-256
+`9bfe0fddea442d81c4984d544673aad4bd9644200ec5e95dcfacc9af6b10cc97`.
+
+### Final C institution browser QA
+
+A real Chromium session opened two synthetic programs, verified the official URL and p.1
+`eligibility` evidence, ran all-company reverse matching as `합성 C 기관담당자` for
+`합성 C 전체기업 재검토`, saved a `conditional` override by `합성 C 기관담당자` for
+`합성 C 증빙 재확인 필요`, and moved the case to `contacted` as `합성 C 상담담당자` for
+`합성 C 상담 완료`. The resulting case displayed the effective conditional decision and both
+immutable attributed audit reasons.
+
+The fresh commit-C capture is [institution-workspace.png](../assets/institution-workspace.png),
+1020 × 1415 pixels, SHA-256
+`6324809afae4953dc23ca2bc9ed201e7073d8ee39e3632b750062d1761d254cd`.
+
+### Final C automated and artifact gates
+
+- TDD fix set: RED `4 failed, 9 passed, 1 skipped`; GREEN `13 passed, 1 skipped`.
+- Focused Task 14 gate: 29 passed, 1 recognized native-loader skip.
+- Full suite/JUnit: 561 passed, 1 skipped in 138.74 seconds; 562 tests, zero failures,
+  zero errors, one recognized native-loader skip.
+- Benchmarks: 6 passed in 14.60 seconds; exactly 30 document and 100 assessment cases.
+- Ruff lint passed; Ruff format reported 208 files already formatted.
+- basedpyright: 0 errors, 0 warnings, 0 notes.
+- `uv lock --check`: 71 packages; `git diff --check`: passed.
+- Wheel SHA-256: `f11223f5964031fc96416d90303c36b48a2f0c906bbc47a78765e1e80944a013`.
+- Source distribution SHA-256:
+  `f6de5dfd1315401f2f59544a11e72cfc270fb13ecca78e96f4828292bb12383c`.
+- Direct wheel and sdist inspection found the packaged Skill `SKILL.md` and
+  `agents/openai.yaml` members.
+
+The WeasyPrint preflight now has a finite five-second production timeout. A blocked import is a
+hard timeout failure; only completed stderr is eligible for recognized native-loader
+classification. Tests cover the timeout and an immediate recognized-loader result.
+
+All artifact hashes and gate counts in the historical record below are superseded by the single
+authoritative commit-C values above. No tag was created.
+
+## Historical build-A record (superseded)
 
 - Functional commit A: `8ab4cb2542bc5e859932ef19917edd40d6cab561`
 - Commit A tree: `7a0b1db20ad9d1a54eff8cb036185ccd58cd7190`
