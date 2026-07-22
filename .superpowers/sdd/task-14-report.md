@@ -100,3 +100,89 @@ Manual evidence and exact build identity are in `docs/qa/manual-qa.md`.
   `8a82204740e259b1fe5dfbdc768075de3ca93119e08b807f9ad0df41fc0e3a75`
 
 The intended commit subject is `docs: prepare GrantCompass Korea 0.1 release`.
+
+## Fix wave 1 — review findings closed
+
+Functional commit A is `8ab4cb2542bc5e859932ef19917edd40d6cab561` with tree
+`7a0b1db20ad9d1a54eff8cb036185ccd58cd7190`. All executable behavior, package inputs,
+automated checks, built artifacts, and manual QA below were exercised at that immutable commit.
+The final commit B changes only this report and `docs/qa/manual-qa.md`; it does not change the
+tested tree.
+
+### TDD evidence
+
+The focused review-finding test set was captured RED before implementation:
+
+```text
+13 failed, 5 passed in 1.49s
+```
+
+Failures covered missing inventory derivation, the first-run 503 false stale label,
+encoded/mixed-case credential leakage from a formatted URL argument, absent Skill packaging,
+missing native-loader classification, and invalid cron redirection. The focused set after the
+minimal implementations was GREEN:
+
+```text
+18 passed, 1 skipped in 1.55s
+```
+
+The skip was the real integration preflight matching the recognized missing native-library
+family. Classification tests prove that missing modules, syntax errors, timeouts, and unrelated
+loader errors do not qualify for the skip.
+
+### Finding resolution
+
+- Failure health is derived from a complete recognized-candidate inventory. Deliberately omitted
+  mappings appear in `hidden_failures`; positive and empty inventories are tested. A latest 503 is
+  labeled stale only when the same source has a prior successful run and retained notice data.
+- Query credential names are percent-decoded only for key comparison and matched with `casefold`.
+  Formatted messages and URL-object arguments lose secret values, while noncredential arguments
+  remain unchanged. Logger-level/handler mutations live in a cleanup-protected fixture.
+- Hatch includes the source `skills/` tree in sdist and force-includes the Skill at
+  `grantcompass/skills/grantcompass-korea` in the wheel.
+- The functional WeasyPrint test skips only recognized native-library loader diagnostics.
+- The README cron line creates `var` before redirecting to `var/sync.log`, with a docs contract
+  regression test.
+- Manual QA now names immutable commit A and explains the metadata-only commit B boundary.
+
+### Commit-A verification
+
+- Full suite/JUnit: 559 passed, 1 skipped in 135.89 seconds; 560 tests, zero failures, zero errors.
+- Focused gate: 18 passed, 1 recognized native-loader skip.
+- Benchmarks: 6 passed in 14.40 seconds; exactly 30 document and 100 assessment cases.
+- Ruff: all checks passed; 207 files formatted.
+- basedpyright: 0 errors, 0 warnings, 0 notes.
+- Lock: 71 packages resolved without change.
+- Build: wheel and source distribution created successfully.
+- Changed files: all below 250 pure lines; `git diff --check` passed.
+
+Archive members inspected directly:
+
+- wheel `grantcompass/skills/grantcompass-korea/SKILL.md`
+- wheel `grantcompass/skills/grantcompass-korea/agents/openai.yaml`
+- sdist `grantcompass_korea-0.1.0/skills/grantcompass-korea/SKILL.md`
+- sdist `grantcompass_korea-0.1.0/skills/grantcompass-korea/agents/openai.yaml`
+
+Commit-A artifact hashes:
+
+- wheel `22a32b05bc340f3aa2bca77138d20085ac7fcac6534c6598717858f15829756e`
+- sdist `4dd5e624f72b3e99f3963679ccf096d927851ed966ff987e457da2e87cbb52cd`
+
+A fresh wheel-only environment installed 60 packages from the artifact. Its installed
+`grantcompass` executable rendered all command groups, and `importlib.resources` located the Skill
+under that environment's `Lib/site-packages/grantcompass/skills/grantcompass-korea/SKILL.md`.
+
+### Commit-A manual QA
+
+- Founder CLI: fresh database initialization and synthetic profile creation passed; both
+  fixture-backed source syncs were fresh with zero failures; search returned five results across
+  eligible, conditional, needs-review, ineligible, and missing-rules states; the report preserved
+  URL/hash/block/page/section evidence; missing profile returned exit 3.
+- Real Chrome institution flow: two programs, official source/evidence, all-company reverse match,
+  attributed conditional override, contacted transition, and both immutable reasons passed.
+- Failure flow: all four persisted IDs and `hidden_failures=0` were visible; the real health GET
+  returned 200. Automated tests additionally prove hidden/unmapped and first-run-503 negatives.
+- PDF route: reached the renderer and returned `weasyprint_render_failed` because the Windows host
+  lacks the native library. No PDF render success is claimed.
+
+No tag was created. Unrelated Task 9 and scratch artifacts remained uncommitted.
