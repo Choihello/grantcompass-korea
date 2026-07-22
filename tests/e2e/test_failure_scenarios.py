@@ -189,3 +189,4 @@ async def test_503_without_retained_success_is_not_reported_as_stale(
 
     # Then: a first-run outage is not misrepresented as retained stale data.
     assert "source_503_stale" not in snapshot.visible_failure_ids
+    assert snapshot.hidden_failures == ("source_run:kstartup:http_503",)

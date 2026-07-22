@@ -4,7 +4,7 @@ import os
 import sys
 from collections.abc import Awaitable, Callable
 from importlib.util import find_spec
-from subprocess import CompletedProcess
+from subprocess import DEVNULL, PIPE, CompletedProcess
 from typing import Protocol, final
 
 import fitz
@@ -59,6 +59,7 @@ ProcessRunner = Callable[
     [tuple[str, ...], bytes],
     Awaitable[CompletedProcess[bytes]],
 ]
+ImportProbeRunner = Callable[[tuple[str, ...]], Awaitable[CompletedProcess[bytes]]]
 
 
 @final
@@ -116,6 +117,20 @@ def is_recognized_weasyprint_native_loader_error(diagnostic: str) -> bool:
     return has_loader_phrase and has_native_library
 
 
+async def probe_weasyprint_module(
+    *,
+    process_runner: ImportProbeRunner | None = None,
+    timeout_seconds: float = 5,
+) -> str | None:
+    """Return finite import stderr while allowing timeout to remain a hard failure."""
+    runner = process_runner or _run_import_probe
+    with fail_after(timeout_seconds):
+        completed = await runner((sys.executable, "-c", "import weasyprint"))
+    if completed.returncode == 0:
+        return None
+    return (completed.stderr or b"").decode(errors="replace")
+
+
 def _module_available() -> bool:
     return find_spec("weasyprint") is not None
 
@@ -139,6 +154,10 @@ async def _run_process(
     return await run_process(argv, input=payload, stderr=-1, check=False)
 
 
+async def _run_import_probe(argv: tuple[str, ...]) -> CompletedProcess[bytes]:
+    return await run_process(argv, stdout=DEVNULL, stderr=PIPE, check=False)
+
+
 __all__ = [
     "NativePdfUnavailableError",
     "PdfRenderError",
@@ -146,4 +165,5 @@ __all__ = [
     "WeasyPrintRenderer",
     "blocked_url_fetcher",
     "is_recognized_weasyprint_native_loader_error",
+    "probe_weasyprint_module",
 ]

@@ -1,13 +1,15 @@
 """Persisted operator-visible release failure states."""
 
+import re
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import ClassVar, Final
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from grantcompass.storage.table_eligibility import ApplicantProfileRow
+from grantcompass.storage.table_eligibility import ApplicantProfileRow, RuleAssessmentRow
 from grantcompass.storage.table_notice_analysis import FieldConflictRow
 from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow, SourceRunRow
 
@@ -15,6 +17,7 @@ _SOURCE_503_STALE: Final = "source_503_stale"
 _SCAN_PDF_OCR_REQUIRED: Final = "scan_pdf_ocr_required"
 _CONFLICTING_DEADLINES: Final = "conflicting_deadlines"
 _INCOMPLETE_PROFILE_NEEDS_REVIEW: Final = "incomplete_profile_needs_review"
+_CANDIDATE_TOKEN: Final = re.compile(r"[a-z0-9][a-z0-9_.-]*\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,16 +44,10 @@ class FailureSnapshot:
         visible_entries: tuple[FailureEntry, ...],
     ) -> "FailureSnapshot":
         """Resolve every recognized persisted candidate as visible or hidden."""
-        entries_by_id = {entry.id: entry for entry in visible_entries}
-        unique_candidates = tuple(dict.fromkeys(candidate_ids))
-        entries = tuple(
-            entries_by_id[candidate_id]
-            for candidate_id in unique_candidates
-            if candidate_id in entries_by_id
-        )
-        hidden = tuple(
-            candidate_id for candidate_id in unique_candidates if candidate_id not in entries_by_id
-        )
+        candidates = frozenset(candidate_ids)
+        entries = tuple(entry for entry in visible_entries if entry.id in candidates)
+        visible_ids = frozenset(entry.id for entry in entries)
+        hidden = tuple(sorted(candidates - visible_ids))
         return cls(entries, hidden)
 
     @property
@@ -71,12 +68,10 @@ class FailureHealth(BaseModel):
 async def load_failure_snapshot(session: AsyncSession) -> FailureSnapshot:
     """Detect supported failures from authoritative persisted rows."""
     candidate_ids: list[str] = []
-    if await _latest_source_has_stale_503(session):
-        candidate_ids.append(_SOURCE_503_STALE)
-    if await _has_ocr_required_attachment(session):
-        candidate_ids.append(_SCAN_PDF_OCR_REQUIRED)
-    if await _has_deadline_conflict(session):
-        candidate_ids.append(_CONFLICTING_DEADLINES)
+    candidate_ids.extend(await _source_failure_candidates(session))
+    candidate_ids.extend(await _attachment_failure_candidates(session))
+    candidate_ids.extend(await _field_conflict_candidates(session))
+    candidate_ids.extend(await _rule_assessment_failure_candidates(session))
     if await _has_incomplete_profile(session):
         candidate_ids.append(_INCOMPLETE_PROFILE_NEEDS_REVIEW)
     return FailureSnapshot.from_inventory(
@@ -85,48 +80,96 @@ async def load_failure_snapshot(session: AsyncSession) -> FailureSnapshot:
     )
 
 
-async def _latest_source_has_stale_503(session: AsyncSession) -> bool:
+async def _source_failure_candidates(session: AsyncSession) -> tuple[str, ...]:
     rows = (await session.scalars(select(SourceRunRow).order_by(SourceRunRow.id.desc()))).all()
     latest: dict[str, SourceRunRow] = {}
     for row in rows:
         _ = latest.setdefault(row.source, row)
-    for row in latest.values():
-        if row.status != "failed" or row.error_code != "http_503":
+    candidates: list[str] = []
+    for source in sorted(latest):
+        row = latest[source]
+        if row.status != "failed":
             continue
-        prior_success = await session.scalar(
-            select(SourceRunRow.id)
-            .where(
-                SourceRunRow.source == row.source,
-                SourceRunRow.status == "succeeded",
-                SourceRunRow.id < row.id,
+        if row.error_code == "http_503" and await _has_retained_stale_data(session, row):
+            candidates.append(_SOURCE_503_STALE)
+        else:
+            candidates.append(
+                _hidden_candidate("source_run", row.source, row.error_code or "unknown")
             )
-            .limit(1)
-        )
-        retained_notice = await session.scalar(
-            select(NoticeVersionRow.id).where(NoticeVersionRow.source == row.source).limit(1)
-        )
-        if prior_success is not None and retained_notice is not None:
-            return True
-    return False
+    return tuple(candidates)
 
 
-async def _has_ocr_required_attachment(session: AsyncSession) -> bool:
-    row_id = await session.scalar(
-        select(AttachmentRow.id)
+async def _has_retained_stale_data(session: AsyncSession, row: SourceRunRow) -> bool:
+    prior_success = await session.scalar(
+        select(SourceRunRow.id)
         .where(
-            AttachmentRow.requires_review.is_(True),
-            AttachmentRow.parse_error_code.startswith("ocr_required:"),
+            SourceRunRow.source == row.source,
+            SourceRunRow.status == "succeeded",
+            SourceRunRow.id < row.id,
         )
         .limit(1)
     )
-    return row_id is not None
-
-
-async def _has_deadline_conflict(session: AsyncSession) -> bool:
-    row_id = await session.scalar(
-        select(FieldConflictRow.id).where(FieldConflictRow.field_name == "application_end").limit(1)
+    retained_notice = await session.scalar(
+        select(NoticeVersionRow.id).where(NoticeVersionRow.source == row.source).limit(1)
     )
-    return row_id is not None
+    return prior_success is not None and retained_notice is not None
+
+
+async def _attachment_failure_candidates(session: AsyncSession) -> tuple[str, ...]:
+    rows = (
+        await session.scalars(
+            select(AttachmentRow)
+            .where(
+                AttachmentRow.requires_review.is_(True),
+                AttachmentRow.parse_error_code.is_not(None),
+            )
+            .order_by(AttachmentRow.parse_error_code, AttachmentRow.id)
+        )
+    ).all()
+    return tuple(
+        _SCAN_PDF_OCR_REQUIRED
+        if row.parse_error_code is not None and row.parse_error_code.startswith("ocr_required:")
+        else _hidden_candidate("attachment_parse", row.parse_error_code or "unknown")
+        for row in rows
+    )
+
+
+async def _field_conflict_candidates(session: AsyncSession) -> tuple[str, ...]:
+    rows = (
+        await session.scalars(select(FieldConflictRow).order_by(FieldConflictRow.field_name))
+    ).all()
+    return tuple(
+        _CONFLICTING_DEADLINES
+        if row.field_name == "application_end"
+        else _hidden_candidate("field_conflict", row.field_name)
+        for row in rows
+    )
+
+
+async def _rule_assessment_failure_candidates(session: AsyncSession) -> tuple[str, ...]:
+    error_ids = (
+        await session.scalars(
+            select(RuleAssessmentRow.error_id)
+            .where(RuleAssessmentRow.error_id.is_not(None))
+            .order_by(RuleAssessmentRow.error_id)
+        )
+    ).all()
+    return tuple(
+        _hidden_candidate("rule_assessment", error_id or "unknown") for error_id in error_ids
+    )
+
+
+def _hidden_candidate(namespace: str, *parts: str) -> str:
+    tokens = (_stable_token(namespace), *(_stable_token(part) for part in parts))
+    return ":".join(tokens)
+
+
+def _stable_token(value: str) -> str:
+    normalized = value.casefold()
+    if _CANDIDATE_TOKEN.fullmatch(normalized) is not None:
+        return normalized
+    digest = sha256(value.encode()).hexdigest()[:12]
+    return f"opaque-{digest}"
 
 
 async def _has_incomplete_profile(session: AsyncSession) -> bool:

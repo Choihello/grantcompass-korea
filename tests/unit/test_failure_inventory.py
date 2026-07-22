@@ -1,26 +1,17 @@
-from grantcompass.web.failures import FailureEntry, FailureSnapshot
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from grantcompass.web.failures import load_failure_snapshot
+
+pytestmark = pytest.mark.anyio
 
 
-def test_failure_inventory_derives_hidden_recognized_candidates() -> None:
-    # Given: two recognized persisted candidates but guidance for only one.
-    visible = FailureEntry("visible_failure", "Visible", "Review it")
-
-    # When: the complete candidate inventory is resolved into a snapshot.
-    snapshot = FailureSnapshot.from_inventory(
-        candidate_ids=("visible_failure", "recognized_without_mapping"),
-        visible_entries=(visible,),
-    )
-
-    # Then: the deliberately omitted mapping is explicit rather than silently discarded.
-    assert snapshot.entries == (visible,)
-    assert snapshot.visible_failure_ids == ("visible_failure",)
-    assert snapshot.hidden_failures == ("recognized_without_mapping",)
-
-
-def test_empty_failure_inventory_has_no_visible_or_hidden_failures() -> None:
-    # Given: no recognized persisted failure candidates.
-    # When: the inventory is resolved.
-    snapshot = FailureSnapshot.from_inventory(candidate_ids=(), visible_entries=())
+async def test_clean_persisted_state_has_no_failure_candidates(
+    db_session: AsyncSession,
+) -> None:
+    # Given: a real empty database with no persisted failure-bearing rows.
+    # When: the production inventory audits the database.
+    snapshot = await load_failure_snapshot(db_session)
 
     # Then: both externally reported collections are empty by derivation.
     assert snapshot.visible_failure_ids == ()

@@ -1,15 +1,13 @@
 import os
-import sys
 from importlib.util import find_spec
-from subprocess import DEVNULL, PIPE
 
-import anyio
 import fitz
 import pytest
 
 from grantcompass.reports.pdf_runtime import (
     WeasyPrintRenderer,
     is_recognized_weasyprint_native_loader_error,
+    probe_weasyprint_module,
 )
 
 pytestmark = pytest.mark.anyio
@@ -21,7 +19,7 @@ async def test_functional_weasyprint_runtime_renders_searchable_pdf() -> None:
     if configured is None and find_spec("weasyprint") is None:
         pytest.fail("required weasyprint module is not installed")
     if configured is None:
-        diagnostic = await _module_runtime_diagnostic()
+        diagnostic = await probe_weasyprint_module()
         if diagnostic is not None:
             if is_recognized_weasyprint_native_loader_error(diagnostic):
                 pytest.skip("weasyprint native dependencies are unavailable")
@@ -35,15 +33,3 @@ async def test_functional_weasyprint_runtime_renders_searchable_pdf() -> None:
         extracted = "".join(page.get_text() for page in document)
         assert document.page_count >= 1
     assert "공식 출처" in extracted
-
-
-async def _module_runtime_diagnostic() -> str | None:
-    completed = await anyio.run_process(
-        [sys.executable, "-c", "import weasyprint"],
-        stdout=DEVNULL,
-        stderr=PIPE,
-        check=False,
-    )
-    if completed.returncode == 0:
-        return None
-    return completed.stderr.decode(errors="replace")
