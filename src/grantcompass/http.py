@@ -4,10 +4,23 @@ import logging
 import re
 import socket
 from typing import Final, final, override
+from urllib.parse import unquote
 
 import httpx2
 
-_SERVICE_KEY_QUERY: Final = re.compile(r"([?&](?:serviceKey|crtfcKey)=)[^&\s\"]*")
+_QUERY_PAIR: Final = re.compile(r"([?&])([^=&\s]+)=([^&\s\"']*)")
+_CREDENTIAL_QUERY_KEYS: Final = frozenset({"servicekey", "crtfckey"})
+
+
+def _redact_query_pair(match: re.Match[str]) -> str:
+    separator, encoded_key, _value = match.groups()
+    if unquote(encoded_key).casefold() not in _CREDENTIAL_QUERY_KEYS:
+        return match.group(0)
+    return f"{separator}{encoded_key}=REDACTED"
+
+
+def _redact_query_credentials(message: str) -> str:
+    return _QUERY_PAIR.sub(_redact_query_pair, message)
 
 
 @final
@@ -17,7 +30,7 @@ class _ServiceKeyFilter(logging.Filter):
     @override
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
-        redacted = _SERVICE_KEY_QUERY.sub(r"\1REDACTED", message)
+        redacted = _redact_query_credentials(message)
         if redacted != message:
             record.msg = redacted
             record.args = ()

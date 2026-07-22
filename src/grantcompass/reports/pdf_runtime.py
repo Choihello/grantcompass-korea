@@ -17,6 +17,19 @@ _EXECUTABLE_NOT_FOUND = "weasyprint_executable_not_found"
 _RENDER_TIMEOUT = "weasyprint_render_timeout"
 _RENDER_FAILED = "weasyprint_render_failed"
 _INVALID_PDF = "weasyprint_invalid_pdf"
+_NATIVE_LOADER_PHRASES = (
+    "cannot load library",
+    "cannot open shared object file",
+    "module could not be found",
+)
+_WEASYPRINT_NATIVE_LIBRARIES = (
+    "libgobject-2.0",
+    "gobject-2.0",
+    "libpango-1.0",
+    "pango-1.0",
+    "libcairo-2",
+    "cairo-2",
+)
 
 
 class NativePdfUnavailableError(RuntimeError):
@@ -95,6 +108,14 @@ def blocked_url_fetcher(url: str) -> dict[str, str]:
     raise ValueError(message)
 
 
+def is_recognized_weasyprint_native_loader_error(diagnostic: str) -> bool:
+    """Return whether an import diagnostic is a known optional native-library failure."""
+    normalized = diagnostic.casefold()
+    has_loader_phrase = any(phrase in normalized for phrase in _NATIVE_LOADER_PHRASES)
+    has_native_library = any(library in normalized for library in _WEASYPRINT_NATIVE_LIBRARIES)
+    return has_loader_phrase and has_native_library
+
+
 def _module_available() -> bool:
     return find_spec("weasyprint") is not None
 
@@ -124,4 +145,5 @@ __all__ = [
     "PdfRenderer",
     "WeasyPrintRenderer",
     "blocked_url_fetcher",
+    "is_recognized_weasyprint_native_loader_error",
 ]

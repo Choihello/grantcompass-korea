@@ -12,6 +12,7 @@ from grantcompass.cli.schemas import (
 )
 
 SKILL_PATH = Path("skills/grantcompass-korea")
+PROJECT_CONFIG = Path("pyproject.toml")
 
 
 class SkillMachineContract(BaseModel):
@@ -121,3 +122,22 @@ def test_skill_machine_contract_limits_commands_and_preserves_safety_boundaries(
         "infer_missing_profile_fact",
         "claim_eligibility_without_condition_evidence_states",
     }
+
+
+def test_skill_is_included_at_stable_wheel_and_sdist_paths() -> None:
+    # Given: the release build configuration.
+    configuration = PROJECT_CONFIG.read_text(encoding="utf-8")
+
+    # When: the Hatch artifact contracts are inspected.
+    wheel_contract = configuration.split(
+        "[tool.hatch.build.targets.wheel.force-include]", maxsplit=1
+    )[1].split("[", maxsplit=1)[0]
+    sdist_contract = configuration.split("[tool.hatch.build.targets.sdist]", maxsplit=1)[1].split(
+        "\n[dependency-groups]", maxsplit=1
+    )[0]
+
+    # Then: the source tree ships in sdist and the wheel exposes a stable package resource.
+    assert '"/skills"' in sdist_contract
+    assert (
+        '"skills/grantcompass-korea" = "grantcompass/skills/grantcompass-korea"' in wheel_contract
+    )

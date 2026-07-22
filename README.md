@@ -149,7 +149,7 @@ Register-ScheduledTask -TaskName "GrantCompass source sync" -Action $action -Tri
 For cron, use the project directory so `.env` and the relative SQLite path resolve predictably:
 
 ```cron
-15 */6 * * * cd /srv/grantcompass-korea && .venv/bin/grantcompass sources sync --source all >> var/sync.log 2>&1
+15 */6 * * * cd /srv/grantcompass-korea && mkdir -p var && .venv/bin/grantcompass sources sync --source all >> var/sync.log 2>&1
 ```
 
 Protect the scheduler account, `.env`, SQLite file, and logs with least-privilege permissions.

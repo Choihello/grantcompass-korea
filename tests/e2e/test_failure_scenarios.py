@@ -7,20 +7,21 @@ import httpx2
 import pytest
 from fastapi import FastAPI
 from pydantic import HttpUrl
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.config import Settings
 from grantcompass.documents.ingest import DocumentIngestor
 from grantcompass.domain.enums import SourceName
 from grantcompass.domain.json_types import freeze_json_object
 from grantcompass.domain.programs import RawNotice
-from grantcompass.domain.source_runs import SourceRunFailure
+from grantcompass.domain.source_runs import SourceRunFailure, SourceRunSuccess
 from grantcompass.storage.db import create_engine, create_session_factory
 from grantcompass.storage.repositories import ProgramRepository
 from grantcompass.storage.table_eligibility import ApplicantProfileRow
 from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow
 from grantcompass.storage.tables import Base
 from grantcompass.web.app import create_app, dispose_app
-from grantcompass.web.failures import FailureHealth
+from grantcompass.web.failures import FailureHealth, load_failure_snapshot
 from tests.cli_fixtures import FixedClock
 
 pytestmark = pytest.mark.anyio
@@ -56,6 +57,17 @@ async def _seed_failures(database_url: str) -> None:
         first = await repository.upsert_notice(
             _notice(SourceName.KSTARTUP, "SYNTH-K-503", date(2026, 8, 1)),
             now - timedelta(days=2),
+        )
+        successful_run_id = await repository.start_source_run(
+            SourceName.KSTARTUP, now - timedelta(days=2)
+        )
+        await repository.complete_source_run(
+            successful_run_id,
+            SourceRunSuccess(
+                finished_at=now - timedelta(days=2),
+                item_count=1,
+                response_hash="1" * 64,
+            ),
         )
         _ = await repository.upsert_notice(
             _notice(SourceName.BIZINFO, "SYNTH-B-CONFLICT", date(2026, 8, 1)),
@@ -152,3 +164,28 @@ async def test_stale_source_scan_pdf_conflict_and_missing_profile_are_visible(
     payload = FailureHealth.model_validate_json(health.content)
     assert set(payload.visible_failure_ids) == expected
     assert payload.hidden_failures == ()
+
+
+async def test_503_without_retained_success_is_not_reported_as_stale(
+    db_session: AsyncSession,
+    now: datetime,
+) -> None:
+    # Given: a latest 503 source run with no successful run and no retained source notice.
+    repository = ProgramRepository(db_session)
+    run_id = await repository.start_source_run(SourceName.KSTARTUP, now)
+    await repository.fail_source_run(
+        run_id,
+        SourceRunFailure(
+            finished_at=now,
+            item_count=0,
+            response_hash=None,
+            error_code="http_503",
+            error_message="synthetic first-run outage",
+        ),
+    )
+
+    # When: the persisted failure inventory is resolved.
+    snapshot = await load_failure_snapshot(db_session)
+
+    # Then: a first-run outage is not misrepresented as retained stale data.
+    assert "source_503_stale" not in snapshot.visible_failure_ids

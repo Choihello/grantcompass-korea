@@ -1,13 +1,16 @@
 import os
 import sys
 from importlib.util import find_spec
-from subprocess import DEVNULL
+from subprocess import DEVNULL, PIPE
 
 import anyio
 import fitz
 import pytest
 
-from grantcompass.reports.pdf_runtime import WeasyPrintRenderer
+from grantcompass.reports.pdf_runtime import (
+    WeasyPrintRenderer,
+    is_recognized_weasyprint_native_loader_error,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -16,9 +19,13 @@ async def test_functional_weasyprint_runtime_renders_searchable_pdf() -> None:
     # Given: an explicitly configured executable or a loadable native module runtime.
     configured = os.environ.get("GRANTCOMPASS_WEASYPRINT_EXECUTABLE")
     if configured is None and find_spec("weasyprint") is None:
-        pytest.skip("weasyprint executable and module runtime are unavailable")
-    if configured is None and not await _module_runtime_available():
-        pytest.skip("weasyprint native dependencies are unavailable")
+        pytest.fail("required weasyprint module is not installed")
+    if configured is None:
+        diagnostic = await _module_runtime_diagnostic()
+        if diagnostic is not None:
+            if is_recognized_weasyprint_native_loader_error(diagnostic):
+                pytest.skip("weasyprint native dependencies are unavailable")
+            pytest.fail(f"weasyprint import failed: {diagnostic[-500:]}")
 
     # When: the real subprocess renderer receives safe Korean consultation content.
     result = await WeasyPrintRenderer().render("<p>공식 출처 · 검토자 · 수정 사유</p>")
@@ -30,11 +37,13 @@ async def test_functional_weasyprint_runtime_renders_searchable_pdf() -> None:
     assert "공식 출처" in extracted
 
 
-async def _module_runtime_available() -> bool:
+async def _module_runtime_diagnostic() -> str | None:
     completed = await anyio.run_process(
         [sys.executable, "-c", "import weasyprint"],
         stdout=DEVNULL,
-        stderr=DEVNULL,
+        stderr=PIPE,
         check=False,
     )
-    return completed.returncode == 0
+    if completed.returncode == 0:
+        return None
+    return completed.stderr.decode(errors="replace")

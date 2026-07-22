@@ -42,6 +42,9 @@ exclude = ["/.superpowers", "/.tools", "/.venv"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/grantcompass"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"skills/grantcompass-korea" = "grantcompass/skills/grantcompass-korea"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "/.env.example",
@@ -53,6 +56,7 @@ include = [
     "/docs",
     "/pyproject.toml",
     "/src",
+    "/skills",
     "/tests",
     "/uv.lock",
 ]
