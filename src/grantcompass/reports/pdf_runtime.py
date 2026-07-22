@@ -1,20 +1,22 @@
 """Lazy native and fixed-argv WeasyPrint runtime boundary."""
 
 import os
+import sys
 from collections.abc import Awaitable, Callable
-from importlib import import_module
+from importlib.util import find_spec
 from subprocess import CompletedProcess
-from typing import Protocol, cast, final
+from typing import Protocol, final
 
+import fitz
 from anyio import Path as AsyncPath
 from anyio import fail_after, run_process
-from anyio.to_thread import run_sync
 
 _WEASYPRINT_EXECUTABLE = "GRANTCOMPASS_WEASYPRINT_EXECUTABLE"
 _RUNTIME_UNAVAILABLE = "weasyprint_runtime_unavailable"
 _EXECUTABLE_NOT_FOUND = "weasyprint_executable_not_found"
 _RENDER_TIMEOUT = "weasyprint_render_timeout"
 _RENDER_FAILED = "weasyprint_render_failed"
+_INVALID_PDF = "weasyprint_invalid_pdf"
 
 
 class NativePdfUnavailableError(RuntimeError):
@@ -39,7 +41,7 @@ class PdfRenderer(Protocol):
         ...
 
 
-NativeRenderer = Callable[[str], bytes]
+ModuleAvailable = Callable[[], bool]
 ProcessRunner = Callable[
     [tuple[str, ...], bytes],
     Awaitable[CompletedProcess[bytes]],
@@ -48,44 +50,42 @@ ProcessRunner = Callable[
 
 @final
 class WeasyPrintRenderer:
-    """Prefer explicit approved CLI configuration, otherwise load native lazily."""
+    """Run configured or portable WeasyPrint only through a finite subprocess."""
 
     def __init__(
         self,
         *,
-        native_renderer: NativeRenderer | None = None,
+        module_available: ModuleAvailable | None = None,
         process_runner: ProcessRunner | None = None,
         timeout_seconds: float = 30,
     ) -> None:
-        """Bind controlled runtime adapters and a finite process budget."""
-        self._native_renderer = native_renderer or _render_native
+        """Bind controlled subprocess adapters and a finite process budget."""
+        self._module_available = module_available or _module_available
         self._process_runner = process_runner or _run_process
         self._timeout_seconds = timeout_seconds
 
     async def render(self, markup: str) -> bytes:
-        """Render with configured CLI or the declared Python library."""
+        """Render with configured CLI or the portable Python module CLI."""
         executable = os.environ.get(_WEASYPRINT_EXECUTABLE)
         if executable is not None:
-            return await self._render_cli(markup, executable)
-        try:
-            return await run_sync(self._native_renderer, markup, abandon_on_cancel=True)
-        except NativePdfUnavailableError:
+            if not await AsyncPath(executable).is_file():
+                raise PdfRenderError(_EXECUTABLE_NOT_FOUND)
+            command = (executable, "-", "-")
+        elif self._module_available():
+            command = (sys.executable, "-m", "weasyprint", "-", "-")
+        else:
             raise PdfRenderError(_RUNTIME_UNAVAILABLE) from None
+        return await self._render_process(markup, command)
 
-    async def _render_cli(self, markup: str, executable: str) -> bytes:
-        if not await AsyncPath(executable).is_file():
-            raise PdfRenderError(_EXECUTABLE_NOT_FOUND)
+    async def _render_process(self, markup: str, command: tuple[str, ...]) -> bytes:
         try:
             with fail_after(self._timeout_seconds):
-                completed = await self._process_runner(
-                    (executable, "-", "-"),
-                    markup.encode(),
-                )
+                completed = await self._process_runner(command, markup.encode())
         except TimeoutError:
             raise PdfRenderError(_RENDER_TIMEOUT) from None
         if completed.returncode != 0:
             raise PdfRenderError(_RENDER_FAILED)
-        return completed.stdout
+        return _validated_pdf(completed.stdout)
 
 
 def blocked_url_fetcher(url: str) -> dict[str, str]:
@@ -95,29 +95,20 @@ def blocked_url_fetcher(url: str) -> dict[str, str]:
     raise ValueError(message)
 
 
-def _render_native(markup: str) -> bytes:
+def _module_available() -> bool:
+    return find_spec("weasyprint") is not None
+
+
+def _validated_pdf(payload: bytes) -> bytes:
+    if not payload.startswith(b"%PDF"):
+        raise PdfRenderError(_INVALID_PDF)
     try:
-        module = import_module("weasyprint")
-    except (ImportError, OSError):
-        raise NativePdfUnavailableError from None
-    html_factory = cast("_HtmlFactory", module.__dict__["HTML"])
-    result = html_factory(string=markup, url_fetcher=blocked_url_fetcher).write_pdf()
-    if not isinstance(result, bytes):
-        raise NativePdfUnavailableError
-    return result
-
-
-class _HtmlDocument(Protocol):
-    def write_pdf(self) -> bytes | None: ...
-
-
-class _HtmlFactory(Protocol):
-    def __call__(
-        self,
-        *,
-        string: str,
-        url_fetcher: Callable[[str], dict[str, str]],
-    ) -> _HtmlDocument: ...
+        with fitz.open(stream=payload, filetype="pdf") as document:
+            if document.page_count < 1:
+                raise PdfRenderError(_INVALID_PDF)
+    except RuntimeError:
+        raise PdfRenderError(_INVALID_PDF) from None
+    return payload
 
 
 async def _run_process(

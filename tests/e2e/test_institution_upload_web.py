@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from grantcompass.storage.table_cases import AuditEventRow
 from grantcompass.storage.table_documents import DocumentRow
 from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow, ProgramRow
-from grantcompass.web import manual_routes
+from grantcompass.web import manual_routes, request_limits
 from grantcompass.web.app import get_runtime
 from tests.e2e.test_institution_web import InstitutionHarness, institution_client
 
@@ -65,6 +65,27 @@ async def test_oversized_manual_upload_rolls_back_every_row(
             select(func.count(NoticeVersionRow.id)).where(NoticeVersionRow.source == "manual")
         )
     assert manual_count == 0
+
+
+async def test_manual_request_ceiling_rejects_before_form_spooling(
+    institution_client: InstitutionHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the ASGI ceiling is lower than this multipart request's declared body length.
+    monkeypatch.setattr(request_limits, "MAX_MANUAL_REQUEST_BYTES", 8)
+    before = await _row_counts(institution_client)
+
+    # When: manual registration reaches the live FastAPI form boundary.
+    response = await institution_client.client.post(
+        "/programs/manual",
+        data=_payload("사전 본문 한도 거부"),
+        files={"document": ("small.pdf", b"small-pdf", "application/pdf")},
+    )
+
+    # Then: the receive guard rejects it before form parsing or canonical writes.
+    assert response.status_code == 413
+    assert response.text == "manual_request_too_large"
+    assert await _row_counts(institution_client) == before
 
 
 @pytest.mark.parametrize(

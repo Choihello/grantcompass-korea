@@ -58,3 +58,20 @@ Deployments must provision the approved WeasyPrint executable and set `GRANTCOMP
 - A browser back-navigation replay of a revision-1 review form produced a real `POST /assessments/1/review` `409 Conflict` in the live server log. A subsequent reverse match rendered exactly one latest row for the managed profile (`#3/#4`, automatic), while case HTML retained the two earlier reviewer/audit entries. A final latest-assessment review gave the PDF automatic/override/effective evidence and retained all three audits. A fresh final case tab had `consoleEntries: []` for error/warning levels.
 - Chromium's direct 50 MiB+1 file chooser transfer did not complete within the 120-second QA bound and was aborted before a result. The same live multipart route was then exercised once through the project HTTP client with `/tmp/task13-oversized.pdf` (52,428,801 bytes): `POST /programs/manual` returned `422 attachment_too_large`; immediate SQLite counts before/after were identical: program `1`, manual notice version `0`, attachment `1`, document `1`, audit `3`.
 - `/cases/1/report.pdf` rendered in Chrome's PDF viewer as a searchable two-page PDF. PyMuPDF verified `%PDF`, `PAGES=2`, `SEARCHABLE=True`, 4,134 extracted characters, and all expected automatic/override/effective/reviewer/audit strings. Visual inspection confirmed the state table and source section on page 1 and retained audit history on page 2; measured text bounds were `45.35pt` minimum X and `549.92pt` maximum X on a `595.28pt` A4 page, preserving 45.35pt margins. The local server log contained only the expected local PDF requests; render-boundary tests block external/file/CSS/font/media resources.
+
+## Review fix wave 2
+
+### RED and GREEN
+
+- The wave-2 RED/GREEN suite completed with `78 passed, 1 skipped`. The one optional integration skip is intentional: this Windows environment cannot load the actual WeasyPrint runtime because `libgobject-2.0-0` is missing. Its tracked integration test skips only for the configured runtime failure; the deterministic valid-PDF/PyMuPDF tests exercise the accepted-output boundary without relying on that unavailable native library.
+- Final focused wave-2 smoke: `.venv/Scripts/python.exe -m pytest -q --cache-clear -o cache_dir=<unique temporary directory> --basetemp=<unique temporary directory> tests/e2e/test_institution_upload_web.py tests/unit/test_pdf_runtime.py tests/integration/test_pdf_report_output.py tests/integration/test_real_weasyprint_runtime.py tests/unit/test_manual_request_limit.py tests/unit/test_pdf_runtime_wave2.py` -> `20 passed, 1 skipped in 3.21s`. The skip was `configured WeasyPrint runtime is not functional: weasyprint_render_failed`; no further native/PDF runtime attempt was made.
+
+### Static and full-suite evidence
+
+- Ruff check, Ruff format check, and basedpyright were clean in the wave-2 review run.
+- Authoritative full suite: `534 passed, 1 skipped in 126.37s`. JUnit artifact `.task13-wave2-full.xml` records `535` tests, `0` failures, `0` errors, and `1` skipped.
+
+### Finite live request-limit evidence
+
+- A finite seeded local FastAPI server served `GET /programs/manual` with `200`. A raw HTTP request then sent only headers for `POST /programs/manual`: declared `Content-Length=53,477,377` against central request ceiling `53,477,376`, with `0` body bytes sent. It returned immediately as `413 manual_request_too_large` (`0.000s`), demonstrating rejection before multipart upload parsing or spooling; the server was then stopped.
+- `git diff --check` was run before selective staging. The unverified deployment caveat remains explicit: actual WeasyPrint rendering requires a runtime with `libgobject-2.0-0`; deterministic subprocess-contract and valid-PDF/PyMuPDF tests are green, but this machine cannot provide final native-render proof.

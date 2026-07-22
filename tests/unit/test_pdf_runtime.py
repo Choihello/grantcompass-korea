@@ -1,24 +1,30 @@
+from io import BytesIO
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import anyio
 import pytest
 from anyio import Path as AsyncPath
+from reportlab.pdfgen.canvas import Canvas
 
 import grantcompass.reports.pdf as pdf_module
 
 pytestmark = pytest.mark.anyio
 
 
-def _native_unavailable(_: str) -> bytes:
-    raise pdf_module.NativePdfUnavailableError
+def _valid_pdf() -> bytes:
+    stream = BytesIO()
+    canvas = Canvas(stream)
+    canvas.drawString(72, 720, "GrantCompass")
+    canvas.save()
+    return stream.getvalue()
 
 
 async def test_configured_cli_is_honored_before_native_renderer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given: deployment supplies an approved executable and native loading is unavailable.
+    # Given: deployment supplies an approved executable.
     executable = tmp_path / "weasyprint-approved.exe"
     executable.touch()
     monkeypatch.setenv("GRANTCOMPASS_WEASYPRINT_EXECUTABLE", str(executable))
@@ -29,10 +35,10 @@ async def test_configured_cli_is_honored_before_native_renderer(
         payload: bytes,
     ) -> CompletedProcess[bytes]:
         observed.append((argv, payload))
-        return CompletedProcess(argv, 0, stdout=b"%PDF-cli", stderr=b"")
+        return CompletedProcess(argv, 0, stdout=_valid_pdf(), stderr=b"")
 
     renderer = pdf_module.WeasyPrintRenderer(
-        native_renderer=_native_unavailable,
+        module_available=lambda: False,
         process_runner=process_runner,
     )
 
@@ -40,16 +46,16 @@ async def test_configured_cli_is_honored_before_native_renderer(
     result = await renderer.render("<p>safe</p>")
 
     # Then: fixed argv and stdin/stdout honor the supplied CLI without native probing.
-    assert result == b"%PDF-cli"
+    assert result.startswith(b"%PDF")
     assert observed == [((str(executable), "-", "-"), b"<p>safe</p>")]
 
 
 async def test_missing_native_and_cli_returns_stable_runtime_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given: neither a configured CLI nor a loadable native library is available.
+    # Given: neither a configured CLI nor a discoverable module runtime is available.
     monkeypatch.delenv("GRANTCOMPASS_WEASYPRINT_EXECUTABLE", raising=False)
-    renderer = pdf_module.WeasyPrintRenderer(native_renderer=_native_unavailable)
+    renderer = pdf_module.WeasyPrintRenderer(module_available=lambda: False)
 
     # When: rendering reaches the production runtime selector.
     with pytest.raises(pdf_module.PdfRenderError) as captured:
@@ -112,14 +118,14 @@ async def test_cli_timeout_cancels_runner_cleanup(
 
     async def stalled_runner(
         argv: tuple[str, ...],
-        payload: bytes,
+        _payload: bytes,
     ) -> CompletedProcess[bytes]:
         nonlocal cleaned
         try:
             await anyio.sleep(10)
         finally:
             cleaned = True
-        return CompletedProcess(argv, 0, stdout=payload, stderr=b"")
+        return CompletedProcess(argv, 0, stdout=_valid_pdf(), stderr=b"")
 
     renderer = pdf_module.WeasyPrintRenderer(
         process_runner=stalled_runner,
@@ -148,7 +154,7 @@ async def test_cli_boundary_creates_no_temporary_artifacts(
         argv: tuple[str, ...],
         payload: bytes,
     ) -> CompletedProcess[bytes]:
-        return CompletedProcess(argv, 0, stdout=b"%PDF-clean", stderr=payload[:0])
+        return CompletedProcess(argv, 0, stdout=_valid_pdf(), stderr=payload[:0])
 
     renderer = pdf_module.WeasyPrintRenderer(process_runner=successful_runner)
 
@@ -156,6 +162,6 @@ async def test_cli_boundary_creates_no_temporary_artifacts(
     result = await renderer.render("<p>safe</p>")
 
     # Then: no input/output/temp artifact requires cleanup from the filesystem.
-    assert result == b"%PDF-clean"
+    assert result.startswith(b"%PDF")
     entries = tuple([item async for item in AsyncPath(tmp_path).iterdir()])
     assert entries == (AsyncPath(executable),)

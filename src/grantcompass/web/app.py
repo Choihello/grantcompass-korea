@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from grantcompass.clock import Clock, SystemClock
 from grantcompass.config import Settings
 from grantcompass.storage.db import create_engine, create_session_factory
+from grantcompass.web.request_limits import ManualRequestLimitMiddleware
 from grantcompass.web.routes import router
 from grantcompass.web.runtime import (
     WebRuntime,
@@ -28,6 +29,7 @@ def create_app(settings: Settings | None = None, clock: Clock | None = None) -> 
     resolved = settings or Settings()
     engine = create_engine(resolved.database_url)
     app = FastAPI(title="GrantCompass 기관 검토대장", docs_url=None, redoc_url=None)
+    app.add_middleware(ManualRequestLimitMiddleware)
     register_runtime(
         app,
         WebRuntime(
