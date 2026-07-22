@@ -57,6 +57,7 @@ async def test_second_review_appends_prior_effective_state_oldest_first(
             "second-actor",
             "second-reason",
             REFERENCE_TIME + timedelta(minutes=1),
+            1,
         )
     )
     events = await repository.audit_events(assessment_id)

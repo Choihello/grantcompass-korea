@@ -33,11 +33,12 @@
   </header>
   <section class="meta">
     <div><strong>상담 단계</strong><span class="status">{{ report.case_stage }}</span></div>
-    <div><strong>자동 결과 / 검토 상태</strong>{{ report.automatic_result }} / {{ report.review_status }}</div>
+    <div><strong>자동 종합 / 유효 종합</strong>{{ report.automatic_result }} / {{ report.effective_result }}</div>
     <div><strong>판정시각</strong>{{ report.assessed_at }}</div>
     <div><strong>규칙 버전</strong>{{ report.rule_version }}</div>
     <div><strong>상담 메모</strong>{{ report.case_note }}</div>
-    <div><strong>검토자 / 수정 사유</strong>아래 감사 이력 참조</div>
+    <div><strong>검토 상태</strong>{{ report.review_status }}</div>
+    <div><strong>검토자 / 수정 사유</strong>{{ report.reviewer }} / {{ report.review_reason }}</div>
   </section>
   <h2>공식 출처 · 출처 신선도</h2>
   <table>
@@ -51,10 +52,10 @@
   <h2>조건별 근거</h2>
   {% if report.conditions %}
   <table>
-    <thead><tr><th style="width:15%">자동 상태</th><th>판정 설명</th><th style="width:42%">문서 위치</th></tr></thead>
+    <thead><tr><th style="width:30%">자동 → 재정의 → 유효</th><th>판정 설명</th><th style="width:38%">문서 위치</th></tr></thead>
     <tbody>
     {% for item in report.conditions %}
-      <tr><td class="status">{{ item.status }}</td><td>{{ item.explanation }}</td><td class="location">{{ item.source_url or "근거 없음" }}{% if item.page %} · p.{{ item.page }}{% endif %}{% if item.section_path %} · {{ item.section_path }}{% endif %}</td></tr>
+      <tr><td class="status">{{ item.automatic_status }} → {{ item.override_status or "-" }} → {{ item.effective_status }}</td><td>{{ item.explanation }}</td><td class="location">{{ item.source_url or "근거 없음" }}{% if item.page %} · p.{{ item.page }}{% endif %}{% if item.section_path %} · {{ item.section_path }}{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>

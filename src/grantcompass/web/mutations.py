@@ -8,13 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.cases import CaseId
 from grantcompass.domain.eligibility import EligibilityRuleId
-from grantcompass.domain.enums import ConditionStatus, SourceName
+from grantcompass.domain.enums import SourceName
 from grantcompass.domain.json_types import freeze_json_object
 from grantcompass.domain.programs import AttachmentRef, RawNotice
 from grantcompass.domain.reviews import ConditionOverride, RuleAssessmentId
 from grantcompass.storage.table_cases import CaseRow, ManagedCompanyRow
 from grantcompass.storage.table_eligibility import AssessmentRow, RuleAssessmentRow
-from grantcompass.web.forms import ManualProgramForm
+from grantcompass.web.forms import ManualProgramForm, ReviewConditionForm
 
 _INVALID_REVIEW_STATUS = "invalid_review_status"
 
@@ -46,33 +46,30 @@ def manual_raw_notice(
 async def review_overrides(
     session: AsyncSession,
     assessment: AssessmentRow,
-    requested: str,
+    requested: tuple[ReviewConditionForm, ...],
 ) -> tuple[ConditionOverride, ...]:
-    """Convert a requested final state into one explicit condition override."""
-    if requested == assessment.final_status:
-        return ()
-    status_by_result = {
-        "eligible": ConditionStatus.SATISFIED,
-        "conditional": ConditionStatus.CONDITIONAL,
-        "ineligible": ConditionStatus.UNSATISFIED,
-        "needs_review": ConditionStatus.UNKNOWN,
-    }
-    if requested not in status_by_result:
-        raise ValueError(_INVALID_REVIEW_STATUS)
-    row = await session.scalar(
-        select(RuleAssessmentRow)
-        .where(RuleAssessmentRow.assessment_id == assessment.id)
-        .order_by(RuleAssessmentRow.id)
-        .limit(1)
+    """Resolve submitted condition identities to their persisted rule identities."""
+    rows = tuple(
+        (
+            await session.scalars(
+                select(RuleAssessmentRow)
+                .where(RuleAssessmentRow.assessment_id == assessment.id)
+                .order_by(RuleAssessmentRow.id)
+            )
+        ).all()
     )
-    if row is None:
-        return ()
-    return (
+    row_by_id = {row.id: row for row in rows}
+    requested_ids = tuple(item.rule_assessment_id for item in requested)
+    if len(set(requested_ids)) != len(requested_ids) or set(requested_ids) != set(row_by_id):
+        raise ValueError(_INVALID_REVIEW_STATUS)
+    return tuple(
         ConditionOverride(
-            RuleAssessmentId(row.id),
-            EligibilityRuleId(row.rule_id),
-            status_by_result[requested],
-        ),
+            RuleAssessmentId(item.rule_assessment_id),
+            EligibilityRuleId(row_by_id[item.rule_assessment_id].rule_id),
+            item.status,
+        )
+        for item in requested
+        if item.status is not None
     )
 
 

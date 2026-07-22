@@ -1,14 +1,11 @@
 """Secure evidence-rich consultation PDF rendering."""
 
-import os
 import re
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Final, final, override
 from zoneinfo import ZoneInfo
 
-from anyio import Path as AsyncPath
-from anyio import fail_after, run_process
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +15,13 @@ from grantcompass.reports.consultation_data import (
     ConsultationData,
     load_consultation_data,
 )
+from grantcompass.reports.pdf_runtime import (
+    NativePdfUnavailableError,
+    PdfRenderer,
+    PdfRenderError,
+    WeasyPrintRenderer,
+    blocked_url_fetcher,
+)
 
 _TEMPLATE_DIR = Path(__file__).with_name("templates")
 _ENVIRONMENT = Environment(
@@ -26,27 +30,6 @@ _ENVIRONMENT = Environment(
 )
 _RESOURCE_ATTRIBUTES: Final = frozenset({"src", "srcset", "href", "xlink:href", "poster", "data"})
 _CSS_RESOURCE = re.compile(r"(?:url\s*\(|@import\b)", flags=re.IGNORECASE)
-_WEASYPRINT_EXECUTABLE = "GRANTCOMPASS_WEASYPRINT_EXECUTABLE"
-_RENDER_TIMEOUT_SECONDS = 30
-_RUNTIME_UNAVAILABLE = "weasyprint_runtime_unavailable"
-_EXECUTABLE_NOT_FOUND = "weasyprint_executable_not_found"
-_RENDER_TIMEOUT = "weasyprint_render_timeout"
-_RENDER_FAILED = "weasyprint_render_failed"
-
-
-@final
-class PdfRenderError(RuntimeError):
-    """Carry one stable actionable consultation PDF failure code."""
-
-    def __init__(self, code: str) -> None:
-        """Store a finite code without leaking process diagnostics."""
-        self.code = code
-        super().__init__(code)
-
-    @override
-    def __str__(self) -> str:
-        """Return the stable deployment-safe failure code."""
-        return self.code
 
 
 @final
@@ -58,11 +41,13 @@ class ConsultationReportService:
         session: AsyncSession,
         clock: Clock | None = None,
         timezone: str = "Asia/Seoul",
+        renderer: PdfRenderer | None = None,
     ) -> None:
         """Bind report generation to one caller-owned async session."""
         self._session = session
         self._clock = clock or SystemClock()
         self._timezone = ZoneInfo(timezone)
+        self._renderer = renderer or WeasyPrintRenderer()
 
     async def load(self, case_id: int) -> ConsultationData:
         """Load the complete dossier used by both HTML and PDF surfaces."""
@@ -77,18 +62,13 @@ class ConsultationReportService:
         """Render one searchable PDF without permitting external resource access."""
         data = await self.load(case_id)
         markup = _ENVIRONMENT.get_template("consultation.html").render(report=data)
-        _reject_resource_markup(markup)
-        configured = os.environ.get(_WEASYPRINT_EXECUTABLE)
-        if configured is None:
-            raise PdfRenderError(_RUNTIME_UNAVAILABLE)
-        return await _render_with_executable(markup, configured)
+        return await render_secure_pdf(markup, self._renderer)
 
 
-def blocked_url_fetcher(url: str) -> dict[str, str]:
-    """Reject every external, local-file, and data resource requested by WeasyPrint."""
-    scheme = url.split(":", maxsplit=1)[0]
-    message = f"external_resource_blocked:{scheme}"
-    raise ValueError(message)
+async def render_secure_pdf(markup: str, renderer: PdfRenderer) -> bytes:
+    """Validate render-boundary markup before invoking the selected renderer."""
+    _reject_resource_markup(markup)
+    return await renderer.render(markup)
 
 
 def _reject_resource_markup(markup: str) -> None:
@@ -146,27 +126,13 @@ class _ResourceMarkupGuard(HTMLParser):
         raise ValueError(message)
 
 
-async def _render_with_executable(markup: str, executable: str) -> bytes:
-    if not await AsyncPath(executable).is_file():
-        raise PdfRenderError(_EXECUTABLE_NOT_FOUND)
-    try:
-        with fail_after(_RENDER_TIMEOUT_SECONDS):
-            completed = await run_process(
-                [executable, "-", "-"],
-                input=markup.encode(),
-                stderr=-1,
-                check=False,
-            )
-    except TimeoutError:
-        raise PdfRenderError(_RENDER_TIMEOUT) from None
-    if completed.returncode != 0:
-        raise PdfRenderError(_RENDER_FAILED)
-    return completed.stdout
-
-
 __all__ = [
     "ConsultationData",
     "ConsultationReportService",
+    "NativePdfUnavailableError",
     "PdfRenderError",
+    "PdfRenderer",
+    "WeasyPrintRenderer",
     "blocked_url_fetcher",
+    "render_secure_pdf",
 ]

@@ -10,6 +10,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.cases import CaseId
+from grantcompass.reports.review_state import CurrentReviewState, load_current_review
 from grantcompass.storage.table_cases import AuditEventRow, CaseRow, ManagedCompanyRow
 from grantcompass.storage.table_documents import EvidenceRow
 from grantcompass.storage.table_eligibility import (
@@ -37,7 +38,9 @@ class SourceLine:
 class ConditionLine:
     """One automatic condition and its durable evidence location."""
 
-    status: str
+    automatic_status: str
+    override_status: str | None
+    effective_status: str
     explanation: str
     source_url: str | None
     page: int | None
@@ -70,7 +73,10 @@ class ConsultationData:
     assessed_at: str
     rule_version: str
     automatic_result: str
+    effective_result: str
     review_status: str
+    reviewer: str
+    review_reason: str
     sources: tuple[SourceLine, ...]
     conditions: tuple[ConditionLine, ...]
     audit: tuple[AuditLine, ...]
@@ -93,15 +99,20 @@ async def load_consultation_data(
     profile = await session.get(ApplicantProfileRow, managed.profile_id)
     if profile is None:
         raise NoResultFound
-    assessment = await session.scalar(
-        select(AssessmentRow)
-        .where(
-            AssessmentRow.program_id == program.id,
-            AssessmentRow.profile_id == profile.id,
-        )
-        .order_by(AssessmentRow.id.desc())
-        .limit(1)
+    assessments = tuple(
+        (
+            await session.scalars(
+                select(AssessmentRow)
+                .where(
+                    AssessmentRow.program_id == program.id,
+                    AssessmentRow.profile_id == profile.id,
+                )
+                .order_by(AssessmentRow.assessed_at, AssessmentRow.id)
+            )
+        ).all()
     )
+    assessment = assessments[-1] if assessments else None
+    review = await load_current_review(session, assessment) if assessment else None
     return ConsultationData(
         case_id=case.id,
         program_id=program.id,
@@ -113,18 +124,18 @@ async def load_consultation_data(
         assessed_at=_display_time(assessment.assessed_at, timezone) if assessment else "미판정",
         rule_version=assessment.rule_version if assessment else "-",
         automatic_result=assessment.final_status if assessment else "미판정",
+        effective_result=review.effective_final_status if review else "미판정",
         review_status=assessment.review_status if assessment else "미검토",
+        reviewer=review.reviewer if review else "-",
+        review_reason=review.reason if review else "-",
         sources=await _source_lines(session, program.id, now, timezone),
-        conditions=await _condition_lines(session, assessment),
-        audit=await _audit_lines(session, case.id, assessment, timezone),
+        conditions=await _condition_lines(session, assessment, review),
+        audit=await _audit_lines(session, case.id, assessments, timezone),
     )
 
 
 async def _source_lines(
-    session: AsyncSession,
-    program_id: int,
-    now: datetime,
-    timezone: ZoneInfo,
+    session: AsyncSession, program_id: int, now: datetime, timezone: ZoneInfo
 ) -> tuple[SourceLine, ...]:
     rows = (
         await session.scalars(
@@ -154,6 +165,7 @@ async def _source_lines(
 async def _condition_lines(
     session: AsyncSession,
     assessment: AssessmentRow | None,
+    review: CurrentReviewState | None,
 ) -> tuple[ConditionLine, ...]:
     if assessment is None:
         return ()
@@ -168,9 +180,12 @@ async def _condition_lines(
     for row in rows:
         evidence_ids = _EVIDENCE_IDS.validate_json(row.evidence_ids_json)
         evidence = await session.get(EvidenceRow, evidence_ids[0]) if evidence_ids else None
+        override = review.override_for(row.id) if review else None
         lines.append(
             ConditionLine(
-                status=row.status,
+                automatic_status=row.status,
+                override_status=override,
+                effective_status=override or row.status,
                 explanation=row.explanation,
                 source_url=evidence.source_url if evidence else None,
                 page=evidence.page if evidence else None,
@@ -183,15 +198,16 @@ async def _condition_lines(
 async def _audit_lines(
     session: AsyncSession,
     case_id: int,
-    assessment: AssessmentRow | None,
+    assessments: tuple[AssessmentRow, ...],
     timezone: ZoneInfo,
 ) -> tuple[AuditLine, ...]:
+    assessment_ids = tuple(str(item.id) for item in assessments)
     assessment_filter = (
         and_(
             AuditEventRow.entity_type == "assessment",
-            AuditEventRow.entity_id == str(assessment.id),
+            AuditEventRow.entity_id.in_(assessment_ids),
         )
-        if assessment is not None
+        if assessment_ids
         else AuditEventRow.id < 0
     )
     rows = (
@@ -206,7 +222,7 @@ async def _audit_lines(
                     assessment_filter,
                 )
             )
-            .order_by(AuditEventRow.id)
+            .order_by(AuditEventRow.created_at, AuditEventRow.id)
         )
     ).all()
     return tuple(

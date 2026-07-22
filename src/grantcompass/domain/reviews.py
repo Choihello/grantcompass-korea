@@ -30,6 +30,7 @@ class AssessmentReviewCommand:
     actor: str
     reason: str
     reviewed_at: datetime
+    expected_review_revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)

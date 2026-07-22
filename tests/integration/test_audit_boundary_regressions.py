@@ -90,7 +90,7 @@ async def test_second_review_rejects_malformed_prior_state(
     # When: the malformed prior state would otherwise become the next before-state.
     with pytest.raises(AuditValidationError) as captured:
         _ = await repository.review(
-            AssessmentReviewCommand(assessment_id, (), "second", "second", REFERENCE_TIME)
+            AssessmentReviewCommand(assessment_id, (), "second", "second", REFERENCE_TIME, 1)
         )
 
     # Then: no review or audit sibling is fabricated.
@@ -130,7 +130,7 @@ async def test_second_review_rejects_schema_valid_prior_context_corruption(
     # When: a second review attempts to reuse the corrupted state as its before-state.
     with pytest.raises(AuditValidationError) as captured:
         _ = await repository.review(
-            AssessmentReviewCommand(assessment_id, (), "second", "second", REFERENCE_TIME)
+            AssessmentReviewCommand(assessment_id, (), "second", "second", REFERENCE_TIME, 1)
         )
 
     # Then: the semantic corruption is finite and the review transaction fully rolls back.
@@ -161,7 +161,7 @@ async def test_supported_wrong_assessment_entity_type_is_discovered_and_rejected
         _ = await repository.audit_events(assessment_id)
     with pytest.raises(AuditValidationError) as review_error:
         _ = await repository.review(
-            AssessmentReviewCommand(assessment_id, (), "second", "second", REFERENCE_TIME)
+            AssessmentReviewCommand(assessment_id, (), "second", "second", REFERENCE_TIME, 1)
         )
 
     # Then: the wrong supported pair is visible as malformed and no sibling is fabricated.

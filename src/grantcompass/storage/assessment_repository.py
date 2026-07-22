@@ -49,18 +49,14 @@ class AssessmentRepository:
     async def review(self, command: AssessmentReviewCommand) -> AssessmentReview:
         """Persist review progress and one attributed audit event atomically."""
         actor, reason = validate_attribution(command.actor, command.reason, command.reviewed_at)
+        expected_revision = _validated_review_revision(command.expected_review_revision)
         async with self._session.begin():
             assessment = await self._session.get(AssessmentRow, int(command.assessment_id))
             if assessment is None:
                 raise AuditValidationError(AuditErrorCode.ASSESSMENT_NOT_FOUND)
-            observed_revision = _validated_review_revision(assessment.review_revision)
-            persisted_revision = await self._session.scalar(
-                select(AssessmentRow.review_revision).where(AssessmentRow.id == assessment.id)
-            )
-            if persisted_revision != observed_revision:
-                raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
             await self._session.refresh(assessment)
-            if _validated_review_revision(assessment.review_revision) != observed_revision:
+            observed_revision = _validated_review_revision(assessment.review_revision)
+            if observed_revision != expected_revision:
                 raise AuditValidationError(AuditErrorCode.CONCURRENT_CHANGE)
             original_status = parse_review_status(assessment.review_status)
             next_revision = observed_revision + 1
@@ -115,7 +111,7 @@ class AssessmentRepository:
                 .where(
                     AssessmentRow.id == assessment.id,
                     AssessmentRow.review_status == assessment.review_status,
-                    AssessmentRow.review_revision == observed_revision,
+                    AssessmentRow.review_revision == expected_revision,
                 )
                 .values(
                     review_status=ReviewStatus.REVIEWED.value,

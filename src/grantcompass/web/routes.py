@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from pydantic import ValidationError
 from sqlalchemy.exc import NoResultFound
 
 from grantcompass.domain.cases import (
@@ -26,8 +27,8 @@ from grantcompass.storage.table_eligibility import AssessmentRow
 from grantcompass.web.company_queries import list_companies
 from grantcompass.web.forms import (
     AttributionForm,
-    ReviewForm,
     TransitionForm,
+    parse_review_request,
 )
 from grantcompass.web.manual_routes import manual_router
 from grantcompass.web.mutations import (
@@ -65,7 +66,7 @@ async def program_detail(request: Request, program_id: int) -> Response:
     """Render official sources, conditions, locations, and reverse matches."""
     runtime = active_runtime()
     async with runtime.session_factory() as session:
-        detail = await get_program_detail(session, program_id)
+        detail = await get_program_detail(session, program_id, runtime.settings.timezone)
     if detail is None:
         return PlainTextResponse("program_not_found", status_code=404)
     return runtime.templates.TemplateResponse(
@@ -97,17 +98,18 @@ async def reverse_match(
 
 @router.post("/assessments/{assessment_id}/review")
 async def review_assessment(
+    request: Request,
     assessment_id: int,
-    form: Annotated[ReviewForm, Form()],
 ) -> Response:
     """Apply one attributed assessment review through its repository."""
     runtime = active_runtime()
     try:
+        form = await parse_review_request(request)
         async with runtime.session_factory() as read_session:
             assessment = await read_session.get(AssessmentRow, assessment_id)
             if assessment is None:
                 return PlainTextResponse("assessment_not_found", status_code=404)
-            overrides = await review_overrides(read_session, assessment, form.status)
+            overrides = await review_overrides(read_session, assessment, form.conditions)
             program_id = assessment.program_id
             profile_id = assessment.profile_id
         async with runtime.session_factory() as mutation_session:
@@ -118,11 +120,12 @@ async def review_assessment(
                     form.actor,
                     form.reason,
                     runtime.clock.now().astimezone(UTC),
+                    form.expected_review_revision,
                 )
             )
         async with runtime.session_factory() as read_session:
             case_id = await case_for_assessment(read_session, program_id, profile_id)
-    except ValueError:
+    except (TypeError, ValidationError, ValueError):
         return PlainTextResponse("invalid_review_status", status_code=422)
     except AuditValidationError as error:
         status_code = 409 if error.code.value == "concurrent_change" else 422

@@ -5,10 +5,12 @@ from pathlib import Path
 import httpx2
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import select
 
 from grantcompass.config import Settings
 from grantcompass.storage.db import create_engine, create_session_factory
-from grantcompass.storage.table_eligibility import ApplicantProfileRow
+from grantcompass.storage.table_cases import AuditEventRow, CaseRow
+from grantcompass.storage.table_eligibility import ApplicantProfileRow, AssessmentRow
 from grantcompass.storage.tables import Base
 from grantcompass.web.app import create_app, dispose_app, get_runtime
 from tests.e2e.institution_seed import seed_institution
@@ -21,6 +23,23 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "documents"
 class InstitutionHarness:
     app: FastAPI
     client: httpx2.AsyncClient
+
+
+async def _mutation_state(
+    harness: InstitutionHarness,
+) -> tuple[tuple[tuple[int, int, str], ...], tuple[tuple[int, str], ...], int]:
+    runtime = get_runtime(harness.app)
+    async with runtime.session_factory() as session:
+        assessments = (
+            await session.scalars(select(AssessmentRow).order_by(AssessmentRow.id))
+        ).all()
+        cases = (await session.scalars(select(CaseRow).order_by(CaseRow.id))).all()
+        events = (await session.scalars(select(AuditEventRow.id))).all()
+    return (
+        tuple((row.id, row.review_revision, row.review_status) for row in assessments),
+        tuple((row.id, row.stage) for row in cases),
+        len(events),
+    )
 
 
 @pytest.fixture
@@ -82,7 +101,13 @@ async def test_review_and_case_transition_append_visible_audit(
     # When: each authoritative repository receives one attributed mutation.
     reviewed = await institution_client.client.post(
         "/assessments/1/review",
-        data={"actor": "담당자", "reason": "사업자등록증 확인", "status": "eligible"},
+        data={
+            "actor": "담당자",
+            "reason": "사업자등록증 확인",
+            "expected_review_revision": "0",
+            "condition_status_1": "",
+            "condition_status_2": "",
+        },
     )
     transitioned = await institution_client.client.post(
         "/cases/1/transition",
@@ -104,7 +129,16 @@ async def test_review_and_case_transition_append_visible_audit(
     ("path", "data"),
     [
         ("/programs/1/reverse-match", {"actor": "", "reason": "근거"}),
-        ("/assessments/1/review", {"actor": "담당자", "reason": "", "status": "eligible"}),
+        (
+            "/assessments/1/review",
+            {
+                "actor": "담당자",
+                "reason": "",
+                "expected_review_revision": "0",
+                "condition_status_1": "",
+                "condition_status_2": "",
+            },
+        ),
         ("/cases/1/transition", {"actor": "", "reason": "근거", "stage": "contacted"}),
     ],
 )
@@ -114,12 +148,15 @@ async def test_mutating_posts_reject_missing_attribution_without_writes(
     data: dict[str, str],
 ) -> None:
     # Given: one mutation with a missing actor or reason.
+    before = await _mutation_state(institution_client)
+
     # When: the invalid form crosses the HTTP boundary.
     response = await institution_client.client.post(path, data=data)
 
-    # Then: it is safely rejected without pretending to redirect.
+    # Then: no assessment, case, revision, review status, or audit side effect survives.
     assert response.status_code == 422
     assert "actor_required" in response.text or "reason_required" in response.text
+    assert await _mutation_state(institution_client) == before
 
 
 async def test_invalid_case_transition_is_safe(institution_client: InstitutionHarness) -> None:

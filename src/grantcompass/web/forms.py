@@ -4,11 +4,14 @@ from datetime import date
 from typing import ClassVar
 
 from fastapi import Request
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 from starlette.datastructures import FormData, UploadFile
+
+from grantcompass.domain.enums import ConditionStatus
 
 _INVALID_DOCUMENT_FIELD = "invalid_document_field"
 _REQUIRED_FORM_TEXT = "required_form_text"
+_CONDITION_PREFIX = "condition_status_"
 
 
 class AttributionForm(BaseModel):
@@ -20,10 +23,18 @@ class AttributionForm(BaseModel):
     reason: str
 
 
-class ReviewForm(AttributionForm):
-    """Human assessment review form."""
+class ReviewConditionForm(BaseModel):
+    """One explicit browser-submitted condition identity and override."""
 
-    status: str
+    rule_assessment_id: int = Field(gt=0)
+    status: ConditionStatus | None
+
+
+class ReviewForm(AttributionForm):
+    """Revision-bound human assessment review form."""
+
+    expected_review_revision: int = Field(ge=0)
+    conditions: tuple[ReviewConditionForm, ...] = Field(min_length=1)
 
 
 class TransitionForm(AttributionForm):
@@ -62,6 +73,27 @@ async def parse_manual_request(
     return form, document_value
 
 
+async def parse_review_request(request: Request) -> ReviewForm:
+    """Parse revision and per-condition identities from one review form."""
+    data = await request.form()
+    conditions = tuple(
+        ReviewConditionForm(
+            rule_assessment_id=int(name.removeprefix(_CONDITION_PREFIX)),
+            status=None if value == "" else ConditionStatus(value),
+        )
+        for name, value in data.multi_items()
+        if name.startswith(_CONDITION_PREFIX) and isinstance(value, str)
+    )
+    return ReviewForm.model_validate(
+        {
+            "actor": _required_text(data, "actor"),
+            "reason": _required_text(data, "reason"),
+            "expected_review_revision": _required_text(data, "expected_review_revision"),
+            "conditions": conditions,
+        }
+    )
+
+
 def _required_text(data: FormData, name: str) -> str:
     value = data.get(name)
     if not isinstance(value, str):
@@ -72,7 +104,9 @@ def _required_text(data: FormData, name: str) -> str:
 __all__ = [
     "AttributionForm",
     "ManualProgramForm",
+    "ReviewConditionForm",
     "ReviewForm",
     "TransitionForm",
     "parse_manual_request",
+    "parse_review_request",
 ]

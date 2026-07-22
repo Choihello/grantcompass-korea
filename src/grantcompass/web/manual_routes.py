@@ -6,8 +6,11 @@ from pathlib import PurePath
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from pydantic import ValidationError
+from starlette.datastructures import UploadFile
 
+from grantcompass.documents.download import MAX_ATTACHMENT_BYTES
 from grantcompass.documents.errors import DocumentIngestError
+from grantcompass.documents.ingest import ATTACHMENT_TOO_LARGE
 from grantcompass.domain.cases import AuditValidationError
 from grantcompass.storage.repositories import ManualNoticeCommand, ProgramRepository
 from grantcompass.web.forms import parse_manual_request
@@ -44,9 +47,13 @@ async def create_manual_program(request: Request) -> Response:
     ):
         await document.close()
         return PlainTextResponse("invalid_attachment_type", status_code=422)
-    content = await document.read() if document is not None else None
-    if document is not None:
-        await document.close()
+    try:
+        content = await _bounded_upload(document) if document is not None else None
+    except DocumentIngestError as error:
+        return PlainTextResponse(error.code, status_code=422)
+    finally:
+        if document is not None:
+            await document.close()
     now = runtime.clock.now().astimezone(UTC)
     raw = manual_raw_notice(form, filename, now.isoformat())
     try:
@@ -59,6 +66,21 @@ async def create_manual_program(request: Request) -> Response:
     except DocumentIngestError as error:
         return PlainTextResponse(error.code, status_code=422)
     return RedirectResponse(f"/programs/{int(result.program_id)}", status_code=303)
+
+
+async def _bounded_upload(document: UploadFile) -> bytes:
+    remaining = MAX_ATTACHMENT_BYTES + 1
+    chunks: list[bytes] = []
+    while remaining > 0:
+        chunk = await document.read(min(64 * 1024, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    content = b"".join(chunks)
+    if len(content) > MAX_ATTACHMENT_BYTES:
+        raise DocumentIngestError(ATTACHMENT_TOO_LARGE)
+    return content
 
 
 __all__ = ["manual_router"]

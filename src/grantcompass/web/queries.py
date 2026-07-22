@@ -2,21 +2,19 @@
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.storage.table_documents import EvidenceRow, rule_evidence
-from grantcompass.storage.table_eligibility import (
-    ApplicantProfileRow,
-    AssessmentRow,
-    EligibilityRuleRow,
-)
+from grantcompass.storage.table_eligibility import EligibilityRuleRow
 from grantcompass.storage.table_notice_analysis import (
     ChangeSetRow,
     CurrentNoticeVersionRow,
 )
 from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow, ProgramRow
+from grantcompass.web.match_queries import MatchEntry, latest_matches
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +36,8 @@ class NoticeEntry:
 
     source: str
     detail_url: str
-    collected_at: datetime
+    collected_at: str
+    attachments: tuple[AttachmentRow, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,16 +53,6 @@ class EvidenceEntry:
 
 
 @dataclass(frozen=True, slots=True)
-class MatchEntry:
-    """One latest company assessment for a selected program."""
-
-    assessment_id: int
-    company_name: str
-    final_status: str
-    review_status: str
-
-
-@dataclass(frozen=True, slots=True)
 class ProgramDetail:
     """Complete read model for one program dossier."""
 
@@ -73,7 +62,6 @@ class ProgramDetail:
     application_start: date | None
     application_end: date | None
     notices: tuple[NoticeEntry, ...]
-    attachments: tuple[AttachmentRow, ...]
     evidence: tuple[EvidenceEntry, ...]
     matches: tuple[MatchEntry, ...]
 
@@ -127,7 +115,11 @@ async def list_programs(
     return tuple(entries)
 
 
-async def get_program_detail(session: AsyncSession, program_id: int) -> ProgramDetail | None:
+async def get_program_detail(
+    session: AsyncSession,
+    program_id: int,
+    timezone: str,
+) -> ProgramDetail | None:
     """Return the evidence-first detail read model for one program."""
     program = await session.get(ProgramRow, program_id)
     if program is None:
@@ -147,6 +139,9 @@ async def get_program_detail(session: AsyncSession, program_id: int) -> ProgramD
         if notice_ids
         else ()
     )
+    attachments_by_notice: dict[int, list[AttachmentRow]] = {}
+    for attachment in attachments:
+        attachments_by_notice.setdefault(attachment.notice_version_id, []).append(attachment)
     rules = (
         await session.scalars(
             select(EligibilityRuleRow)
@@ -173,28 +168,7 @@ async def get_program_detail(session: AsyncSession, program_id: int) -> ProgramD
                 evidence.section_path if evidence else None,
             )
         )
-    assessments = (
-        await session.scalars(
-            select(AssessmentRow)
-            .where(AssessmentRow.program_id == program.id)
-            .order_by(AssessmentRow.id.desc())
-        )
-    ).all()
-    match_entries: list[MatchEntry] = []
-    for assessment in assessments:
-        profile = (
-            await session.scalars(
-                select(ApplicantProfileRow).where(ApplicantProfileRow.id == assessment.profile_id)
-            )
-        ).one()
-        match_entries.append(
-            MatchEntry(
-                assessment.id,
-                profile.display_name,
-                assessment.final_status,
-                assessment.review_status,
-            )
-        )
+    target_timezone = ZoneInfo(timezone)
     return ProgramDetail(
         id=program.id,
         title=program.title,
@@ -202,11 +176,16 @@ async def get_program_detail(session: AsyncSession, program_id: int) -> ProgramD
         application_start=program.application_start,
         application_end=program.application_end,
         notices=tuple(
-            NoticeEntry(item.source, item.detail_url, item.collected_at) for item in notices
+            NoticeEntry(
+                item.source,
+                item.detail_url,
+                _display_time(item.collected_at, target_timezone),
+                tuple(attachments_by_notice.get(item.id, ())),
+            )
+            for item in notices
         ),
-        attachments=attachments,
         evidence=tuple(evidence_entries),
-        matches=tuple(match_entries),
+        matches=await latest_matches(session, program.id),
     )
 
 
@@ -228,3 +207,7 @@ async def _current_notices(session: AsyncSession, program_id: int) -> tuple[Noti
 
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _display_time(value: datetime, timezone: ZoneInfo) -> str:
+    return _as_utc(value).astimezone(timezone).strftime("%Y-%m-%d %H:%M KST")

@@ -47,6 +47,7 @@ async def test_two_stale_second_reviewers_cannot_create_sibling_history(
                     "winner",
                     "winner",
                     REFERENCE_TIME + timedelta(minutes=1),
+                    1,
                 )
             )
             with pytest.raises(AuditValidationError) as captured:
@@ -57,6 +58,7 @@ async def test_two_stale_second_reviewers_cannot_create_sibling_history(
                         "stale",
                         "stale",
                         REFERENCE_TIME + timedelta(minutes=2),
+                        1,
                     )
                 )
 
@@ -97,6 +99,7 @@ async def test_review_audit_snapshots_form_revision_chain(tmp_path: Path) -> Non
                     "second",
                     "second",
                     REFERENCE_TIME + timedelta(minutes=1),
+                    1,
                 )
             )
             events = await repository.audit_events(assessment_id)

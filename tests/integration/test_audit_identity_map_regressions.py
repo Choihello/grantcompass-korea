@@ -76,6 +76,7 @@ async def test_assessment_review_refreshes_cached_automatic_state(
                         "second",
                         "second",
                         REFERENCE_TIME + timedelta(minutes=1),
+                        1,
                     )
                 )
         async with factory() as verification:
@@ -164,6 +165,7 @@ async def test_stale_assessment_revision_precedes_malformed_audit(tmp_path: Path
                     "winner",
                     "winner",
                     REFERENCE_TIME + timedelta(minutes=1),
+                    1,
                 )
             )
             async with factory() as corruptor:
@@ -182,6 +184,7 @@ async def test_stale_assessment_revision_precedes_malformed_audit(tmp_path: Path
                         "stale",
                         "stale",
                         REFERENCE_TIME + timedelta(minutes=2),
+                        1,
                     )
                 )
         async with factory() as verification:
