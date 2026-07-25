@@ -47,9 +47,6 @@ class ChangeSetRow(Base):
     """Persisted notice-version transition and its changed normalized fields."""
 
     __tablename__: str = "change_sets"
-    __table_args__: tuple[UniqueConstraint] = (
-        UniqueConstraint("current_version_id", name="uq_change_set_current_version"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(30), index=True)

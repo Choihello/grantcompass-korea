@@ -16,13 +16,16 @@ from grantcompass.documents.download import MAX_ATTACHMENT_BYTES
 from grantcompass.documents.errors import DocumentIngestError, DocumentIngestErrorCode
 from grantcompass.documents.hwpx import HwpxParser
 from grantcompass.documents.pdf import PdfParser
+from grantcompass.domain.enums import ReviewStatus
+from grantcompass.rules.candidates import RegexRuleCandidateProvider
 from grantcompass.storage.table_documents import (
     DocumentBlockRow,
     DocumentRow,
     EvidenceRow,
     rule_evidence,
 )
-from grantcompass.storage.table_programs import AttachmentRow
+from grantcompass.storage.table_eligibility import EligibilityRuleRow
+from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow
 
 IngestStatus = Literal["parsed", "requires_review", "failed", "missing"]
 MissingCode = Literal["attachment_missing", "download_url_missing"]
@@ -31,6 +34,8 @@ _HWPX_PARSER: Final = ("hwpx", "1.0.0")
 ATTACHMENT_TOO_LARGE: Final[DocumentIngestErrorCode] = "attachment_too_large"
 INVALID_ATTACHMENT_TYPE: Final[DocumentIngestErrorCode] = "invalid_attachment_type"
 ATTACHMENT_NOT_FOUND: Final = "attachment_not_found"
+NOTICE_VERSION_NOT_FOUND: Final = "notice_version_not_found"
+DOCUMENT_BLOCK_NOT_FOUND: Final = "document_block_not_found"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +110,19 @@ class DocumentIngestor:
         await self._session.flush()
         return outcome
 
+    async def mark_failed(
+        self,
+        attachment_id: int,
+        reason: str,
+    ) -> DocumentIngestOutcome:
+        """Flush a reviewable download or analysis failure state."""
+        attachment = await self._attachment(attachment_id)
+        await self._remove_document_evidence(attachment.id, delete_documents=True)
+        outcome = DocumentIngestOutcome(attachment_id, "failed", None, reason)
+        self._set_attachment_state(attachment, outcome, None, None)
+        await self._session.flush()
+        return outcome
+
     async def _attachment(self, attachment_id: int) -> AttachmentRow:
         attachment = await self._session.get(AttachmentRow, attachment_id)
         if attachment is None:
@@ -135,30 +153,89 @@ class DocumentIngestor:
             parsed.parser_version,
         )
         document = await self._replace_document(attachment.id, parsed)
-        self._session.add_all(
-            [
-                DocumentBlockRow(
-                    document_id=document.id,
-                    ordinal=block.ordinal,
-                    kind=block.kind,
-                    text=block.text,
-                    page=block.page,
-                    section_path=block.section_path,
-                    table_ref=block.table_ref,
-                    source_block_id=str(block.block_id),
-                    bbox_json=(
-                        json.dumps(block.bbox, separators=(",", ":"))
-                        if block.bbox is not None
-                        else None
-                    ),
-                    confidence=block.confidence,
-                    provenance=block.provenance,
-                )
-                for block in parsed.blocks
-            ]
-        )
+        blocks = [
+            DocumentBlockRow(
+                document_id=document.id,
+                ordinal=block.ordinal,
+                kind=block.kind,
+                text=block.text,
+                page=block.page,
+                section_path=block.section_path,
+                table_ref=block.table_ref,
+                source_block_id=str(block.block_id),
+                bbox_json=(
+                    json.dumps(block.bbox, separators=(",", ":"))
+                    if block.bbox is not None
+                    else None
+                ),
+                confidence=block.confidence,
+                provenance=block.provenance,
+            )
+            for block in parsed.blocks
+        ]
+        self._session.add_all(blocks)
         await self._session.flush()
+        await self._persist_rule_candidates(attachment, document, parsed, blocks)
         return outcome
+
+    async def _persist_rule_candidates(
+        self,
+        attachment: AttachmentRow,
+        document: DocumentRow,
+        parsed: ParsedDocument,
+        blocks: list[DocumentBlockRow],
+    ) -> None:
+        rules = RegexRuleCandidateProvider().extract(parsed)
+        if not rules:
+            if attachment.parse_error_code is None:
+                attachment.parse_error_code = "no_rule_candidates"
+            attachment.requires_review = True
+            await self._session.flush()
+            return
+        notice = await self._session.get(NoticeVersionRow, attachment.notice_version_id)
+        if notice is None:
+            raise LookupError(NOTICE_VERSION_NOT_FOUND)
+        block_rows = {row.source_block_id: row for row in blocks}
+        for rule in rules:
+            rule_row = EligibilityRuleRow(
+                program_id=notice.program_id,
+                kind=rule.kind.value,
+                operator=rule.operator,
+                expected_json=json.dumps(
+                    rule.expected_value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                required=rule.required,
+                review_status=ReviewStatus.REVIEW_REQUIRED.value,
+                rule_version=rule.rule_version,
+                source_document_id=document.id,
+            )
+            self._session.add(rule_row)
+            await self._session.flush()
+            for evidence in rule.evidence:
+                block_row = block_rows.get(str(evidence.block_id))
+                if block_row is None:
+                    raise LookupError(DOCUMENT_BLOCK_NOT_FOUND)
+                evidence_row = EvidenceRow(
+                    document_id=document.id,
+                    block_id=block_row.id,
+                    source_url=evidence.source_url,
+                    page=evidence.page,
+                    section_path=evidence.section_path,
+                    quote=evidence.quote,
+                    content_hash=evidence.content_hash,
+                )
+                self._session.add(evidence_row)
+                await self._session.flush()
+                _ = await self._session.execute(
+                    rule_evidence.insert().values(
+                        rule_id=rule_row.id,
+                        evidence_id=evidence_row.id,
+                    )
+                )
+        attachment.requires_review = True
+        await self._session.flush()
 
     async def _replace_document(
         self,
@@ -206,6 +283,15 @@ class DocumentIngestor:
             DocumentBlockRow.document_id.in_(document_ids)
         )
         evidence_ids = select(EvidenceRow.id).where(EvidenceRow.block_id.in_(block_ids))
+        generated_rule_ids = select(EligibilityRuleRow.id).where(
+            EligibilityRuleRow.source_document_id.in_(document_ids)
+        )
+        _ = await self._session.execute(
+            delete(rule_evidence).where(rule_evidence.c.rule_id.in_(generated_rule_ids))
+        )
+        _ = await self._session.execute(
+            delete(EligibilityRuleRow).where(EligibilityRuleRow.id.in_(generated_rule_ids))
+        )
         _ = await self._session.execute(
             delete(rule_evidence).where(rule_evidence.c.evidence_id.in_(evidence_ids))
         )

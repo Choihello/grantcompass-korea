@@ -21,6 +21,7 @@ from grantcompass.reports.pdf_runtime import (
     PdfRenderError,
     WeasyPrintRenderer,
     blocked_url_fetcher,
+    validate_pdf_output,
 )
 
 _TEMPLATE_DIR = Path(__file__).with_name("templates")
@@ -68,7 +69,7 @@ class ConsultationReportService:
 async def render_secure_pdf(markup: str, renderer: PdfRenderer) -> bytes:
     """Validate render-boundary markup before invoking the selected renderer."""
     _reject_resource_markup(markup)
-    return await renderer.render(markup)
+    return validate_pdf_output(await renderer.render(markup))
 
 
 def _reject_resource_markup(markup: str) -> None:

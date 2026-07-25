@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime, time
 from typing import Final, Literal, override
 
 from grantcompass.domain.documents import EvidenceId
@@ -104,10 +104,17 @@ class DeterministicAssessmentEngine:
         profile: ApplicantProfile,
         rules: Sequence[EligibilityRule],
         assessed_at: datetime,
+        *,
+        reference_date: date | None = None,
     ) -> AssessmentResult:
         """Validate identities, evaluate every rule, and aggregate exact statuses."""
         validated = _validate_input(profile, rules, assessed_at)
-        raw_items = tuple(self._evaluate(profile, rule, assessed_at) for rule in rules)
+        reference_at = (
+            assessed_at
+            if reference_date is None
+            else datetime.combine(reference_date, time.min, tzinfo=UTC)
+        )
+        raw_items = tuple(self._evaluate(profile, rule, reference_at) for rule in rules)
         items = promote_conflicts(rules, raw_items)
         final_status = aggregate_final_status(tuple(item.status for item in items))
         review_required = any(

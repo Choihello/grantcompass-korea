@@ -33,6 +33,8 @@ async def seed_program(session: AsyncSession) -> ProgramRow:
         application_end=date(2026, 8, 31),
         created_at=REFERENCE_TIME,
         updated_at=REFERENCE_TIME,
+        reference_date=REFERENCE_TIME.date(),
+        reference_date_source="announcement_date",
     )
     session.add(program)
     await session.flush()
@@ -45,6 +47,9 @@ async def seed_program(session: AsyncSession) -> ProgramRow:
         raw_payload_json="{}",
         normalized_json="{}",
         collected_at=REFERENCE_TIME,
+        announcement_date=REFERENCE_TIME.date(),
+        reference_date=REFERENCE_TIME.date(),
+        reference_date_source="announcement_date",
     )
     session.add(notice)
     await session.flush()

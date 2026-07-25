@@ -9,8 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from grantcompass.documents.download import AttachmentDownloader
+from grantcompass.documents.errors import DocumentIngestError
+from grantcompass.documents.ingest import DocumentIngestor
 from grantcompass.domain.enums import SourceName
 from grantcompass.domain.programs import (
+    AttachmentRef,
     CanonicalProgramView,
     FieldConflict,
     IngestResult,
@@ -34,7 +38,7 @@ from grantcompass.storage.notice_queries import (
     read_notice_sources,
     read_program_view,
 )
-from grantcompass.storage.table_programs import NoticeVersionRow, SourceRunRow
+from grantcompass.storage.table_programs import AttachmentRow, NoticeVersionRow, SourceRunRow
 
 __all__ = [
     "AssessmentRepository",
@@ -44,6 +48,7 @@ __all__ = [
 ]
 
 _MAX_INGEST_ATTEMPTS = 3
+_MAX_ATTACHMENTS_PER_NOTICE = 20
 _RETRYABLE_SQLITE_INGEST_RACES = frozenset(
     {
         "UNIQUE constraint failed: programs.canonical_key",
@@ -150,6 +155,46 @@ class ProgramRepository:
     async def create_manual_notice(self, command: ManualNoticeCommand) -> IngestResult:
         """Create, parse, and attribute one manual notice atomically."""
         return await create_manual_notice(self._session, command)
+
+    async def process_notice_attachments(
+        self,
+        notice_version_id: NoticeVersionId,
+        attachments: tuple[AttachmentRef, ...],
+        downloader: AttachmentDownloader,
+    ) -> None:
+        """Download and analyze pending attachments with durable failure states."""
+        async with self._session.begin():
+            pending = list(
+                await self._session.scalars(
+                    select(AttachmentRow)
+                    .where(
+                        AttachmentRow.notice_version_id == int(notice_version_id),
+                        AttachmentRow.parse_status.in_(("pending", "failed", "missing")),
+                    )
+                    .order_by(AttachmentRow.id)
+                )
+            )
+        rows = {(row.filename, row.download_url): row.id for row in pending}
+        for attachment in attachments[:_MAX_ATTACHMENTS_PER_NOTICE]:
+            attachment_id = rows.get((attachment.filename, str(attachment.download_url)))
+            if attachment_id is None:
+                continue
+            try:
+                content = await downloader.fetch(attachment)
+            except DocumentIngestError as error:
+                async with self._session.begin():
+                    ingestor = DocumentIngestor(self._session)
+                    if error.code == "attachment_missing":
+                        _ = await ingestor.mark_missing(attachment_id, "attachment_missing")
+                    else:
+                        _ = await ingestor.mark_failed(attachment_id, error.code)
+                continue
+            async with self._session.begin():
+                _ = await DocumentIngestor(self._session).ingest(
+                    attachment_id,
+                    content,
+                    attachment.filename,
+                )
 
     async def find_merge_candidate(self, raw: RawNotice) -> ProgramId | None:
         """Return a merge target only for the exact conservative identity."""

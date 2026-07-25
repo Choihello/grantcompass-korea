@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,6 +131,8 @@ class NoticeIngestor:
             organization=context.raw.organization,
             application_start=context.raw.application_start,
             application_end=context.raw.application_end,
+            reference_date=_reference_date(context.raw, context.collected_at),
+            reference_date_source=_reference_date_source(context.raw),
             created_at=context.collected_at,
             updated_at=context.collected_at,
         )
@@ -154,6 +156,9 @@ class NoticeIngestor:
             ),
             normalized_json=insert.snapshot.model_dump_json(),
             collected_at=insert.context.collected_at,
+            announcement_date=raw.announcement_date,
+            reference_date=_reference_date(raw, insert.context.collected_at),
+            reference_date_source=_reference_date_source(raw),
         )
         self._session.add(version)
         await self._session.flush()
@@ -170,3 +175,15 @@ class NoticeIngestor:
             for item in raw.attachments
         )
         return version
+
+
+def _reference_date(raw: RawNotice, collected_at: datetime) -> date:
+    if raw.announcement_date is not None:
+        return raw.announcement_date
+    if collected_at.utcoffset() is None:
+        return collected_at.date()
+    return collected_at.astimezone(UTC).date()
+
+
+def _reference_date_source(raw: RawNotice) -> str:
+    return "announcement_date" if raw.announcement_date is not None else "collected_at_fallback"

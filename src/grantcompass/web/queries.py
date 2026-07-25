@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from grantcompass.cli.freshness import load_one_source_freshness
+from grantcompass.domain.enums import FreshnessStatus, SourceName
 from grantcompass.storage.table_documents import EvidenceRow, rule_evidence
 from grantcompass.storage.table_eligibility import EligibilityRuleRow
 from grantcompass.storage.table_notice_analysis import (
@@ -73,6 +75,7 @@ async def list_programs(
     """Return current programs with visible freshness and change badges."""
     programs = (await session.scalars(select(ProgramRow).order_by(ProgramRow.id.desc()))).all()
     entries: list[ProgramListEntry] = []
+    freshness_by_source: dict[SourceName, FreshnessStatus] = {}
     current = now.astimezone(UTC)
     for program in programs:
         notices = await _current_notices(session, program.id)
@@ -89,7 +92,18 @@ async def list_programs(
             .where(NoticeVersionRow.program_id == program.id)
             .limit(1)
         )
-        latest = max((_as_utc(item.collected_at) for item in notices), default=None)
+        source_freshness: list[FreshnessStatus] = []
+        for notice in notices:
+            try:
+                source = SourceName(notice.source)
+            except ValueError:
+                source_freshness.append(FreshnessStatus.STALE)
+                continue
+            if source not in freshness_by_source:
+                freshness_by_source[source] = (
+                    await load_one_source_freshness(session, source)
+                ).status
+            source_freshness.append(freshness_by_source[source])
         badges: list[str] = []
         if current - _as_utc(program.created_at) <= timedelta(days=7):
             badges.append("신규")
@@ -105,9 +119,10 @@ async def list_programs(
                 application_end=program.application_end,
                 sources=" · ".join(item.source for item in notices) or "출처 없음",
                 freshness=(
-                    "fresh"
-                    if latest is not None and current - latest <= timedelta(hours=24)
-                    else "stale"
+                    FreshnessStatus.FRESH.value
+                    if source_freshness
+                    and all(status is FreshnessStatus.FRESH for status in source_freshness)
+                    else FreshnessStatus.STALE.value
                 ),
                 badges=tuple(badges),
             )

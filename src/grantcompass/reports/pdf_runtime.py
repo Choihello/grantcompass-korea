@@ -17,6 +17,8 @@ _EXECUTABLE_NOT_FOUND = "weasyprint_executable_not_found"
 _RENDER_TIMEOUT = "weasyprint_render_timeout"
 _RENDER_FAILED = "weasyprint_render_failed"
 _INVALID_PDF = "weasyprint_invalid_pdf"
+_UNSEARCHABLE_PDF = "weasyprint_unsearchable_pdf"
+_MIN_SEARCHABLE_TEXT_CHARACTERS = 4
 _NATIVE_LOADER_PHRASES = (
     "cannot load library",
     "cannot open shared object file",
@@ -99,7 +101,7 @@ class WeasyPrintRenderer:
             raise PdfRenderError(_RENDER_TIMEOUT) from None
         if completed.returncode != 0:
             raise PdfRenderError(_RENDER_FAILED)
-        return _validated_pdf(completed.stdout)
+        return validate_pdf_output(completed.stdout)
 
 
 def blocked_url_fetcher(url: str) -> dict[str, str]:
@@ -135,15 +137,22 @@ def _module_available() -> bool:
     return find_spec("weasyprint") is not None
 
 
-def _validated_pdf(payload: bytes) -> bytes:
+def validate_pdf_output(payload: bytes) -> bytes:
+    """Reject malformed or non-searchable renderer output."""
     if not payload.startswith(b"%PDF"):
         raise PdfRenderError(_INVALID_PDF)
     try:
         with fitz.open(stream=payload, filetype="pdf") as document:
             if document.page_count < 1:
                 raise PdfRenderError(_INVALID_PDF)
+            text = "".join(page.get_text() for page in document)
     except RuntimeError:
         raise PdfRenderError(_INVALID_PDF) from None
+    searchable = "".join(text.split())
+    if len(searchable) < _MIN_SEARCHABLE_TEXT_CHARACTERS or not any(
+        character.isalnum() for character in searchable
+    ):
+        raise PdfRenderError(_UNSEARCHABLE_PDF)
     return payload
 
 
@@ -166,4 +175,5 @@ __all__ = [
     "blocked_url_fetcher",
     "is_recognized_weasyprint_native_loader_error",
     "probe_weasyprint_module",
+    "validate_pdf_output",
 ]

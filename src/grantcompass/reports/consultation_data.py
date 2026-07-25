@@ -1,7 +1,7 @@
 """Canonical data shared by HTML and PDF consultation dossiers."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from pydantic import TypeAdapter
@@ -9,7 +9,9 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from grantcompass.cli.freshness import load_one_source_freshness
 from grantcompass.domain.cases import CaseId
+from grantcompass.domain.enums import FreshnessStatus, SourceName
 from grantcompass.reports.review_state import CurrentReviewState, load_current_review
 from grantcompass.storage.table_cases import AuditEventRow, CaseRow, ManagedCompanyRow
 from grantcompass.storage.table_documents import EvidenceRow
@@ -85,7 +87,7 @@ class ConsultationData:
 async def load_consultation_data(
     session: AsyncSession,
     case_id: CaseId,
-    now: datetime,
+    _now: datetime,
     timezone: ZoneInfo,
 ) -> ConsultationData:
     """Build one neutral case dossier from canonical persisted rows."""
@@ -128,14 +130,14 @@ async def load_consultation_data(
         review_status=assessment.review_status if assessment else "미검토",
         reviewer=review.reviewer if review else "-",
         review_reason=review.reason if review else "-",
-        sources=await _source_lines(session, program.id, now, timezone),
+        sources=await _source_lines(session, program.id, timezone),
         conditions=await _condition_lines(session, assessment, review),
         audit=await _audit_lines(session, case.id, assessments, timezone),
     )
 
 
 async def _source_lines(
-    session: AsyncSession, program_id: int, now: datetime, timezone: ZoneInfo
+    session: AsyncSession, program_id: int, timezone: ZoneInfo
 ) -> tuple[SourceLine, ...]:
     rows = (
         await session.scalars(
@@ -148,18 +150,23 @@ async def _source_lines(
             .order_by(NoticeVersionRow.source, NoticeVersionRow.source_notice_id)
         )
     ).all()
-    current = now.astimezone(UTC)
-    return tuple(
-        SourceLine(
-            source=row.source,
-            detail_url=row.detail_url,
-            collected_at=_display_time(row.collected_at, timezone),
-            freshness=(
-                "fresh" if current - _as_utc(row.collected_at) <= timedelta(hours=24) else "stale"
-            ),
+    lines: list[SourceLine] = []
+    for row in rows:
+        try:
+            source = SourceName(row.source)
+        except ValueError:
+            freshness = FreshnessStatus.STALE
+        else:
+            freshness = (await load_one_source_freshness(session, source)).status
+        lines.append(
+            SourceLine(
+                source=row.source,
+                detail_url=row.detail_url,
+                collected_at=_display_time(row.collected_at, timezone),
+                freshness=freshness.value,
+            )
         )
-        for row in rows
-    )
+    return tuple(lines)
 
 
 async def _condition_lines(

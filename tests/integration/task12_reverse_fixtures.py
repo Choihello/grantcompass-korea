@@ -43,6 +43,9 @@ async def seed_reverse_matrix(session: AsyncSession) -> ProgramRow:
         raw_payload_json="{}",
         normalized_json="{}",
         collected_at=REFERENCE_TIME,
+        announcement_date=REFERENCE_TIME.date(),
+        reference_date=REFERENCE_TIME.date(),
+        reference_date_source="announcement_date",
     )
     session.add(second_notice)
     await session.flush()

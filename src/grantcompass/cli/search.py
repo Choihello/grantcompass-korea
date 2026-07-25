@@ -93,7 +93,14 @@ def _assess_records(
             errors.append((record.program.id, record.errors))
             continue
         try:
-            assessments.append(engine.assess(profile, record.rules, assessed_at))
+            assessments.append(
+                engine.assess(
+                    profile,
+                    record.rules,
+                    assessed_at,
+                    reference_date=record.program.reference_date,
+                )
+            )
         except AssessmentInputError as error:
             errors.append((record.program.id, (f"assessment_input_{error.code}",)))
     return tuple(assessments), tuple(errors)

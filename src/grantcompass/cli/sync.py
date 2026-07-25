@@ -12,6 +12,7 @@ from grantcompass.cli.freshness import load_one_source_freshness
 from grantcompass.cli.runtime import CliDependencies, load_settings
 from grantcompass.cli.schemas import SyncOutput, SyncResultOutput
 from grantcompass.config import Settings
+from grantcompass.documents.download import AttachmentDownloader, SystemDnsResolver
 from grantcompass.domain.enums import FreshnessStatus, SourceName
 from grantcompass.sources.base import CollectionResult
 from grantcompass.sources.collector import Collector
@@ -101,7 +102,11 @@ async def _collect_sources(
     context: _CollectionContext,
     sources: tuple[SourceName, ...],
 ) -> tuple[tuple[SourceName, CollectionResult], ...]:
-    collector = Collector(context.repository, context.dependencies.clock)
+    collector = Collector(
+        context.repository,
+        context.dependencies.clock,
+        AttachmentDownloader(context.client, SystemDnsResolver()),
+    )
     results: list[tuple[SourceName, CollectionResult]] = []
     for source in sources:
         service_key = _service_key(context.settings, source)

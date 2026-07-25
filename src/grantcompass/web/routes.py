@@ -43,7 +43,7 @@ from grantcompass.web.mutations import (
     review_overrides,
 )
 from grantcompass.web.queries import get_program_detail, list_programs
-from grantcompass.web.runtime import active_runtime
+from grantcompass.web.runtime import runtime_for
 
 router = APIRouter(default_response_class=HTMLResponse)
 router.include_router(manual_router)
@@ -58,7 +58,7 @@ async def index() -> RedirectResponse:
 @router.get("/programs")
 async def programs(request: Request) -> Response:
     """Render the source-freshness program ledger."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     async with runtime.session_factory() as session:
         entries = await list_programs(session, runtime.clock.now())
     return runtime.templates.TemplateResponse(
@@ -71,7 +71,7 @@ async def programs(request: Request) -> Response:
 @router.get("/programs/failure-scenario")
 async def failure_scenario(request: Request) -> Response:
     """Render every supported failure detected from persisted domain state."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     async with runtime.session_factory() as session:
         snapshot = await load_failure_snapshot(session)
     return runtime.templates.TemplateResponse(
@@ -82,9 +82,9 @@ async def failure_scenario(request: Request) -> Response:
 
 
 @router.get("/health/failures", response_class=JSONResponse)
-async def failure_health() -> FailureHealth:
+async def failure_health(request: Request) -> FailureHealth:
     """Return stable visible failure IDs and the hidden-failure audit list."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     async with runtime.session_factory() as session:
         snapshot = await load_failure_snapshot(session)
     return FailureHealth(
@@ -96,7 +96,7 @@ async def failure_health() -> FailureHealth:
 @router.get("/programs/{program_id}")
 async def program_detail(request: Request, program_id: int) -> Response:
     """Render official sources, conditions, locations, and reverse matches."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     async with runtime.session_factory() as session:
         detail = await get_program_detail(session, program_id, runtime.settings.timezone)
     if detail is None:
@@ -110,11 +110,12 @@ async def program_detail(request: Request, program_id: int) -> Response:
 
 @router.post("/programs/{program_id}/reverse-match")
 async def reverse_match(
+    request: Request,
     program_id: int,
     form: Annotated[AttributionForm, Form()],
 ) -> Response:
     """Run one attributed reverse-match invocation through the domain service."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     assessed_at = runtime.clock.now().astimezone(UTC)
     try:
         _ = validate_attribution(form.actor, form.reason, assessed_at)
@@ -134,7 +135,7 @@ async def review_assessment(
     assessment_id: int,
 ) -> Response:
     """Apply one attributed assessment review through its repository."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     try:
         form = await parse_review_request(request)
         async with runtime.session_factory() as read_session:
@@ -169,7 +170,7 @@ async def review_assessment(
 @router.get("/companies")
 async def companies(request: Request) -> Response:
     """Render the complete managed-company ledger."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     async with runtime.session_factory() as session:
         entries = await list_companies(session)
     return runtime.templates.TemplateResponse(
@@ -182,7 +183,7 @@ async def companies(request: Request) -> Response:
 @router.get("/cases/{case_id}")
 async def case_detail(request: Request, case_id: int) -> Response:
     """Render one consultation dossier with immutable audit history."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     try:
         async with runtime.session_factory() as session:
             report = await ConsultationReportService(
@@ -201,11 +202,12 @@ async def case_detail(request: Request, case_id: int) -> Response:
 
 @router.post("/cases/{case_id}/transition")
 async def transition_case(
+    request: Request,
     case_id: int,
     form: Annotated[TransitionForm, Form()],
 ) -> Response:
     """Move a support case through the authoritative transition graph."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     try:
         stage = CaseStage(form.stage)
     except ValueError:
@@ -229,9 +231,9 @@ async def transition_case(
 
 
 @router.get("/cases/{case_id}/report.pdf")
-async def consultation_pdf(case_id: int) -> Response:
+async def consultation_pdf(request: Request, case_id: int) -> Response:
     """Render the case dossier as a searchable inline PDF."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     async with runtime.session_factory() as session:
         payload = await ConsultationReportService(
             session,

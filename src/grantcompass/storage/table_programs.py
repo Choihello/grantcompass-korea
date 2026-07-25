@@ -19,6 +19,8 @@ class ProgramRow(Base):
     organization: Mapped[str | None] = mapped_column(String(300))
     application_start: Mapped[date | None] = mapped_column(Date)
     application_end: Mapped[date | None] = mapped_column(Date)
+    reference_date: Mapped[date] = mapped_column(Date)
+    reference_date_source: Mapped[str] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -45,6 +47,9 @@ class NoticeVersionRow(Base):
     raw_payload_json: Mapped[str] = mapped_column(Text)
     normalized_json: Mapped[str] = mapped_column(Text, server_default=text("'{}'"))
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    announcement_date: Mapped[date | None] = mapped_column(Date)
+    reference_date: Mapped[date] = mapped_column(Date)
+    reference_date_source: Mapped[str] = mapped_column(String(40))
 
 
 class AttachmentRow(Base):

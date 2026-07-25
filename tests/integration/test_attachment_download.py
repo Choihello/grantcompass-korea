@@ -177,3 +177,33 @@ async def test_downloader_validates_each_redirect_hop() -> None:
         "cdn-two.example.test",
     ]
     await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_downloader_pins_validated_ip_without_losing_tls_hostname() -> None:
+    # Given: validation resolves a public address while a second hostname lookup could rebind.
+    observed: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        observed.append(request)
+        return httpx2.Response(
+            200,
+            headers={"Content-Type": "application/pdf"},
+            content=b"%PDF-1.4",
+            request=request,
+        )
+
+    resolver = StaticResolver(("93.184.216.34",))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+
+    # When: the validated target crosses the actual transport boundary.
+    content = await AttachmentDownloader(client, resolver).fetch(attachment())
+
+    # Then: transport connects to that exact IP while Host/SNI retain certificate identity.
+    assert content == b"%PDF-1.4"
+    assert len(observed) == 1
+    assert observed[0].url.host == "93.184.216.34"
+    assert observed[0].headers["host"] == "files.example.test"
+    assert observed[0].extensions["sni_hostname"] == "files.example.test"
+    assert resolver.hosts == ["files.example.test"]
+    await client.aclose()

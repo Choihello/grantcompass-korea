@@ -15,7 +15,7 @@ from grantcompass.domain.cases import AuditValidationError
 from grantcompass.storage.repositories import ManualNoticeCommand, ProgramRepository
 from grantcompass.web.forms import parse_manual_request
 from grantcompass.web.mutations import manual_raw_notice
-from grantcompass.web.runtime import active_runtime
+from grantcompass.web.runtime import runtime_for
 
 manual_router = APIRouter(default_response_class=HTMLResponse)
 _SUPPORTED_DOCUMENTS = frozenset({".pdf", ".hwpx"})
@@ -24,7 +24,7 @@ _SUPPORTED_DOCUMENTS = frozenset({".pdf", ".hwpx"})
 @manual_router.get("/programs/manual")
 async def manual_program_form(request: Request) -> Response:
     """Render the institution-owned notice registration desk."""
-    return active_runtime().templates.TemplateResponse(
+    return runtime_for(request).templates.TemplateResponse(
         request=request,
         name="manual_program_form.html",
         context={},
@@ -34,7 +34,7 @@ async def manual_program_form(request: Request) -> Response:
 @manual_router.post("/programs/manual")
 async def create_manual_program(request: Request) -> Response:
     """Register and parse one attributed institution-owned notice."""
-    runtime = active_runtime()
+    runtime = runtime_for(request)
     try:
         form, document = await parse_manual_request(request)
     except (TypeError, ValidationError, ValueError):

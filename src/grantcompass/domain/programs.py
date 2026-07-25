@@ -70,6 +70,7 @@ class RawNotice(BaseModel):
     title: str
     organization: str | None = None
     summary: str | None = None
+    announcement_date: date | None = None
     application_start: date | None = None
     application_end: date | None = None
     detail_url: HttpUrl
@@ -108,6 +109,8 @@ class Program:
     application_end: date | None
     created_at: datetime
     updated_at: datetime
+    reference_date: date
+    reference_date_source: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +125,9 @@ class NoticeVersion:
     detail_url: str
     raw_payload_json: str
     collected_at: datetime
+    announcement_date: date | None
+    reference_date: date
+    reference_date_source: str
 
 
 @dataclass(frozen=True, slots=True)

@@ -207,6 +207,9 @@ async def test_attachments_render_only_under_their_notice_version(
             raw_payload_json="{}",
             normalized_json="{}",
             collected_at=REFERENCE_TIME,
+            announcement_date=REFERENCE_TIME.date(),
+            reference_date=REFERENCE_TIME.date(),
+            reference_date_source="announcement_date",
         )
         session.add(notice)
         await session.flush()

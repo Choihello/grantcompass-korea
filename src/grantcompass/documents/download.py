@@ -76,13 +76,15 @@ class SystemDnsResolver:
         return await run_sync(lookup, abandon_on_cancel=True)
 
 
-class AttachmentDownloader:
-    """Fetch official PDF/HWPX bytes across manually validated HTTPS hops.
+@dataclass(frozen=True, slots=True)
+class _ValidatedTarget:
+    original_url: str
+    pinned_url: str
+    hostname: str
 
-    DNS is revalidated for every redirect. The transport still resolves the hostname
-    independently, so deployments needing DNS-rebinding resistance must pin the validated
-    address in a custom transport or enforce equivalent egress controls.
-    """
+
+class AttachmentDownloader:
+    """Fetch bounded official documents through DNS-pinned HTTPS requests."""
 
     def __init__(
         self,
@@ -112,11 +114,11 @@ class AttachmentDownloader:
         visited: set[str] = set()
         redirects = 0
         while True:
-            normalized_url = await self._validate_target(url, expected_extension)
-            if normalized_url in visited:
+            target = await self._validate_target(url)
+            if target.original_url in visited:
                 raise DocumentIngestError(REDIRECT_LOOP)
-            visited.add(normalized_url)
-            response = await self._send(normalized_url)
+            visited.add(target.original_url)
+            response = await self._send(target)
             try:
                 if response.status_code == HTTP_NOT_FOUND:
                     raise DocumentIngestError(ATTACHMENT_MISSING)
@@ -127,7 +129,7 @@ class AttachmentDownloader:
                     if location is None:
                         raise DocumentIngestError(DOWNLOAD_FAILED)
                     redirects += 1
-                    url = urljoin(normalized_url, location)
+                    url = urljoin(target.original_url, location)
                     continue
                 if response.status_code != HTTP_OK:
                     raise DocumentIngestError(DOWNLOAD_FAILED)
@@ -139,8 +141,12 @@ class AttachmentDownloader:
                 with anyio.CancelScope(shield=True):
                     await response.aclose()
 
-    async def _send(self, url: str) -> httpx2.Response:
-        request = httpx2.Request("GET", url, headers=SAFE_REQUEST_HEADERS)
+    async def _send(self, target: _ValidatedTarget) -> httpx2.Response:
+        request = httpx2.Request(
+            "GET",
+            target.pinned_url,
+            headers={**SAFE_REQUEST_HEADERS, "Host": target.hostname},
+        )
         timeout = httpx2.Timeout(
             connect=self._limits.connect_timeout_seconds,
             read=self._limits.read_timeout_seconds,
@@ -148,6 +154,7 @@ class AttachmentDownloader:
             pool=self._limits.connect_timeout_seconds,
         )
         request.extensions["timeout"] = timeout.as_dict()
+        request.extensions["sni_hostname"] = target.hostname
         try:
             return await self._client.send(
                 request,
@@ -160,7 +167,7 @@ class AttachmentDownloader:
         except httpx2.TransportError:
             raise DocumentIngestError(DOWNLOAD_FAILED) from None
 
-    async def _validate_target(self, url: str, expected_extension: str) -> str:
+    async def _validate_target(self, url: str) -> _ValidatedTarget:
         try:
             parsed = urlsplit(url)
             port = parsed.port
@@ -183,7 +190,6 @@ class AttachmentDownloader:
             or port not in {None, 443}
             or bool(parsed.fragment)
             or not valid_path
-            or PurePath(decoded_path).suffix.casefold() != expected_extension
         ):
             raise DocumentIngestError(UNSAFE_DOWNLOAD_TARGET)
         try:
@@ -193,7 +199,17 @@ class AttachmentDownloader:
         addresses = await self._addresses(host)
         if not addresses or any(not address.is_global for address in addresses):
             raise DocumentIngestError(UNSAFE_DOWNLOAD_TARGET)
-        return parsed.geturl()
+        selected = addresses[0]
+        pinned_host = (
+            f"[{selected.compressed}]" if isinstance(selected, IPv6Address) else selected.compressed
+        )
+        if port is not None:
+            pinned_host = f"{pinned_host}:{port}"
+        return _ValidatedTarget(
+            original_url=parsed.geturl(),
+            pinned_url=parsed._replace(netloc=pinned_host).geturl(),
+            hostname=host,
+        )
 
     async def _addresses(self, host: str) -> tuple[IPv4Address | IPv6Address, ...]:
         try:

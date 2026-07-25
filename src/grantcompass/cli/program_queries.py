@@ -61,6 +61,8 @@ class ProgramQueryRepository:
             application_end=row.application_end,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            reference_date=row.reference_date,
+            reference_date_source=row.reference_date_source,
         )
         rule_rows = (
             await self._session.scalars(

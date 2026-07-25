@@ -32,6 +32,8 @@ def make_program(program_id: int, deadline: date | None = None) -> Program:
         application_end=deadline or date(2026, 8, 31),
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        reference_date=date(2026, 1, 1),
+        reference_date_source="announcement_date",
     )
 
 

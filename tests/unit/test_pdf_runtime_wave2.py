@@ -25,6 +25,17 @@ def _searchable_pdf(text: str = "GrantCompass PDF") -> bytes:
     return stream.getvalue()
 
 
+def _unsearchable_pdf(*, image_only: bool) -> bytes:
+    document = fitz.open()
+    page = document.new_page()
+    if image_only:
+        pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 8, 8), False)  # noqa: FBT003
+        _ = page.insert_image(fitz.Rect(72, 72, 144, 144), pixmap=pixmap)
+    payload = document.tobytes()
+    document.close()
+    return payload
+
+
 async def test_portable_module_cli_uses_the_fixed_process_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -65,6 +76,34 @@ async def test_zero_exit_non_pdf_output_is_rejected(
 
     # Then: structural PDF validation returns a stable safe error.
     assert captured.value.code == "weasyprint_invalid_pdf"
+
+
+@pytest.mark.parametrize("image_only", [False, True])
+async def test_blank_and_image_only_pdf_output_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    image_only: bool,
+) -> None:
+    # Given: the subprocess returns an openable page with no searchable text.
+    executable = tmp_path / "weasyprint.exe"
+    executable.touch()
+    monkeypatch.setenv("GRANTCOMPASS_WEASYPRINT_EXECUTABLE", str(executable))
+
+    async def runner(argv: tuple[str, ...], _: bytes) -> CompletedProcess[bytes]:
+        return CompletedProcess(
+            argv,
+            0,
+            stdout=_unsearchable_pdf(image_only=image_only),
+            stderr=b"",
+        )
+
+    # When: final accepted-output validation inspects extracted text.
+    with pytest.raises(PdfRenderError) as captured:
+        _ = await WeasyPrintRenderer(process_runner=runner).render("<p>expected text</p>")
+
+    # Then: blank and image-only artifacts share one actionable searchable-PDF failure.
+    assert captured.value.code == "weasyprint_unsearchable_pdf"
 
 
 async def test_timeout_waits_for_process_runner_cleanup(

@@ -31,6 +31,8 @@ def test_report_rejects_cross_program_impact_assessment_reference() -> None:
         application_end=date(2026, 8, 1),
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        reference_date=date(2026, 1, 1),
+        reference_date_source="announcement_date",
     )
     second_assessment = replace(
         base.matches[0].assessment,

@@ -33,6 +33,8 @@ def make_program() -> Program:
         application_end=date(2026, 7, 31),
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        reference_date=date(2026, 1, 1),
+        reference_date_source="announcement_date",
     )
 
 

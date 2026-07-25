@@ -4,6 +4,7 @@ from hashlib import sha256
 from typing import Final, final
 
 from grantcompass.clock import Clock
+from grantcompass.documents.download import AttachmentDownloader
 from grantcompass.domain.enums import FreshnessStatus, SourceName
 from grantcompass.domain.source_runs import SourceRunFailure, SourceRunSuccess
 from grantcompass.sources.base import (
@@ -28,10 +29,16 @@ _UNEXPECTED_COLLECTION_ERRORS: Final[tuple[type[Exception], ...]] = (Exception,)
 class Collector:
     """Collect one adapter without converting upstream failure into an empty result."""
 
-    def __init__(self, repository: ProgramRepository, clock: Clock) -> None:
+    def __init__(
+        self,
+        repository: ProgramRepository,
+        clock: Clock,
+        attachment_downloader: AttachmentDownloader | None = None,
+    ) -> None:
         """Bind the isolated collector to persistence and a deterministic clock."""
         self._repository: ProgramRepository = repository
         self._clock: Clock = clock
+        self._attachment_downloader: AttachmentDownloader | None = attachment_downloader
 
     async def collect(
         self,
@@ -52,6 +59,12 @@ class Collector:
                 response_hashes.append(page.response_hash)
                 for notice in page.items:
                     result = await self._repository.upsert_notice(notice, self._clock.now())
+                    if self._attachment_downloader is not None:
+                        await self._repository.process_notice_attachments(
+                            result.notice_version_id,
+                            notice.attachments,
+                            self._attachment_downloader,
+                        )
                     if result.notice_version_created:
                         stored += 1
                     else:

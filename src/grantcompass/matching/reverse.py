@@ -85,6 +85,7 @@ class ReverseMatchingService:
                 profile,
                 context.program.rules,
                 assessed_at,
+                reference_date=context.program.program.reference_date,
             )
         except AssessmentInputError as error:
             return _unmatched(candidate, context, assessment_input_error(error.code))

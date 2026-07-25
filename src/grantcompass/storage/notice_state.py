@@ -105,6 +105,27 @@ async def refresh_legacy_program(session: AsyncSession, state: LegacyRefreshStat
         program.application_start = next(iter(starts))
     if len(ends) == 1:
         program.application_end = next(iter(ends))
+    reference_rows = (
+        await session.scalars(
+            select(NoticeVersionRow)
+            .join(
+                CurrentNoticeVersionRow,
+                CurrentNoticeVersionRow.version_id == NoticeVersionRow.id,
+            )
+            .where(NoticeVersionRow.program_id == state.program_id)
+            .order_by(
+                NoticeVersionRow.reference_date,
+                NoticeVersionRow.reference_date_source,
+                NoticeVersionRow.source,
+                NoticeVersionRow.source_notice_id,
+                NoticeVersionRow.id,
+            )
+        )
+    ).all()
+    if reference_rows:
+        reference = reference_rows[0]
+        program.reference_date = reference.reference_date
+        program.reference_date_source = reference.reference_date_source
     complete = (
         bool(program.title.strip())
         and bool(program.organization)

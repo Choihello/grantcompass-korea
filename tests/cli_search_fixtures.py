@@ -40,6 +40,8 @@ async def seed_search_fixture(
                         application_end=date(2026, 8, program_id),
                         created_at=datetime(2026, 1, 1, tzinfo=UTC),
                         updated_at=datetime(2026, 7, 1, tzinfo=UTC),
+                        reference_date=date(2026, 7, 1),
+                        reference_date_source="announcement_date",
                     )
                 )
             await session.flush()
@@ -115,6 +117,9 @@ async def _add_evidence_chain(session: AsyncSession, program_id: int) -> None:
             raw_payload_json="{}",
             normalized_json="{}",
             collected_at=datetime(2026, 7, 14, tzinfo=UTC),
+            announcement_date=date(2026, 7, 14),
+            reference_date=date(2026, 7, 14),
+            reference_date_source="announcement_date",
         )
     )
     await session.flush()

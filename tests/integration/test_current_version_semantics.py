@@ -2,11 +2,13 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.enums import FinalStatus, ReviewStatus, SourceName
 from grantcompass.storage.repositories import ProgramRepository
 from grantcompass.storage.table_eligibility import ApplicantProfileRow, AssessmentRow
+from grantcompass.storage.table_notice_analysis import ChangeSetRow
 from tests.factories import NoticeValues, make_notice
 
 
@@ -78,3 +80,46 @@ async def test_a_to_b_to_a_to_a_reuses_version_and_tracks_current(
     assert view.conflicts == ()
     await db_session.refresh(assessment)
     assert assessment.review_status == ReviewStatus.REVIEW_REQUIRED.value
+
+
+@pytest.mark.anyio
+async def test_a_to_b_to_a_to_b_records_each_real_transition(
+    program_repository: ProgramRepository,
+    db_session: AsyncSession,
+    now: datetime,
+) -> None:
+    # Given: two immutable snapshots have alternated through A -> B -> A.
+    values_a = NoticeValues(summary="A recurring condition")
+    values_b = replace(values_a, summary="B recurring condition")
+    first_a = await program_repository.upsert_notice(
+        make_notice(SourceName.KSTARTUP, "K-RECURRING-1", values_a), now
+    )
+    first_b = await program_repository.upsert_notice(
+        make_notice(SourceName.KSTARTUP, "K-RECURRING-1", values_b),
+        now + timedelta(hours=1),
+    )
+    second_a = await program_repository.upsert_notice(
+        make_notice(SourceName.KSTARTUP, "K-RECURRING-1", values_a),
+        now + timedelta(hours=2),
+    )
+
+    # When: the already-seen B content becomes current again.
+    second_b = await program_repository.upsert_notice(
+        make_notice(SourceName.KSTARTUP, "K-RECURRING-1", values_b),
+        now + timedelta(hours=3),
+    )
+
+    # Then: version reuse stays idempotent while every pointer transition remains historical.
+    rows = (await db_session.scalars(select(ChangeSetRow).order_by(ChangeSetRow.id))).all()
+    assert second_a.notice_version_id == first_a.notice_version_id
+    assert second_b.notice_version_id == first_b.notice_version_id
+    assert second_b.notice_version_created is False
+    assert [(row.previous_version_id, row.current_version_id) for row in rows] == [
+        (int(first_a.notice_version_id), int(first_b.notice_version_id)),
+        (int(first_b.notice_version_id), int(first_a.notice_version_id)),
+        (int(first_a.notice_version_id), int(first_b.notice_version_id)),
+    ]
+    assert (
+        await program_repository.current_notice_version(SourceName.KSTARTUP, "K-RECURRING-1")
+        == first_b.notice_version_id
+    )

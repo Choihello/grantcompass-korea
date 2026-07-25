@@ -21,6 +21,7 @@ class EligibilityRuleRow(Base):
     required: Mapped[bool] = mapped_column()
     review_status: Mapped[str] = mapped_column(String(40))
     rule_version: Mapped[str] = mapped_column(String(100))
+    source_document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id"), index=True)
 
 
 class ApplicantProfileRow(Base):

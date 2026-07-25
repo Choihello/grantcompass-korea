@@ -28,6 +28,7 @@ class NoticeSnapshot(BaseModel):
     application_end: date | None
     detail_url: str
     attachments: tuple[str, ...]
+    announcement_date: date | None = None
 
     @classmethod
     def from_raw(cls, raw: RawNotice) -> "NoticeSnapshot":
@@ -38,6 +39,7 @@ class NoticeSnapshot(BaseModel):
             summary=raw.summary,
             application_start=raw.application_start,
             application_end=raw.application_end,
+            announcement_date=raw.announcement_date,
             detail_url=str(raw.detail_url),
             attachments=tuple(
                 "|".join(

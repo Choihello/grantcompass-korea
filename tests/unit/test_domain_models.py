@@ -106,6 +106,8 @@ def test_program_is_frozen_internal_outcome() -> None:
         application_end=None,
         created_at=recorded_at,
         updated_at=recorded_at,
+        reference_date=recorded_at.date(),
+        reference_date_source="announcement_date",
     )
 
     # When: a caller tries to replace its title.

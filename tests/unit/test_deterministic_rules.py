@@ -101,6 +101,45 @@ def test_representative_age_uses_utc_reference_year() -> None:
 
 
 @pytest.mark.parametrize(
+    ("rule", "profile", "expected_status"),
+    [
+        (
+            RuleValues(RuleKind.BUSINESS_AGE_MONTHS, "lte", 36),
+            make_profile(replace(PROFILE_VALUES, founded_on=date(2023, 1, 2))),
+            ConditionStatus.SATISFIED,
+        ),
+        (
+            RuleValues(RuleKind.REPRESENTATIVE_AGE, "lte", 39),
+            make_profile(replace(PROFILE_VALUES, representative_birth_year=1987)),
+            ConditionStatus.SATISFIED,
+        ),
+    ],
+)
+def test_temporal_rules_use_stable_announcement_reference_date(
+    rule: RuleValues,
+    profile: ApplicantProfile,
+    expected_status: ConditionStatus,
+) -> None:
+    # Given: invocation occurs years after the announcement's eligibility reference date.
+    invocation = datetime(2030, 7, 15, tzinfo=UTC)
+
+    # When: the persisted announcement date is supplied separately from invocation time.
+    item = (
+        DeterministicAssessmentEngine()
+        .assess(
+            profile,
+            (make_rule(rule),),
+            invocation,
+            reference_date=date(2026, 1, 1),
+        )
+        .items[0]
+    )
+
+    # Then: business and representative age are evaluated at the announcement date.
+    assert item.status is expected_status
+
+
+@pytest.mark.parametrize(
     ("values", "expected_status", "expected_error"),
     [
         (RuleValues(RuleKind.REGION, "in", "kr-11"), ConditionStatus.SATISFIED, None),

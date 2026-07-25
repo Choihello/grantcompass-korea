@@ -28,6 +28,8 @@ async def _attachment_row(session: AsyncSession, identity: str = "fixture-1") ->
             application_end=None,
             created_at=now,
             updated_at=now,
+            reference_date=now.date(),
+            reference_date_source="collected_at_fallback",
         )
         session.add(program)
         await session.flush()
@@ -40,6 +42,9 @@ async def _attachment_row(session: AsyncSession, identity: str = "fixture-1") ->
             raw_payload_json="{}",
             normalized_json="{}",
             collected_at=now,
+            announcement_date=None,
+            reference_date=now.date(),
+            reference_date_source="collected_at_fallback",
         )
         session.add(notice)
         await session.flush()

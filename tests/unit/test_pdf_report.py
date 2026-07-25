@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+import fitz
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +31,23 @@ class ControlledRenderer:
     async def render(self, markup: str) -> bytes:
         self.markup = markup
         self.calls += 1
-        return b"%PDF-controlled"
+        document = fitz.open()
+        page = document.new_page()
+        _ = page.insert_text((72, 72), "GrantCompass consultation")
+        payload = document.tobytes()
+        document.close()
+        return payload
+
+
+@dataclass(slots=True)
+class BlankPdfRenderer:
+    async def render(self, markup: str) -> bytes:
+        del markup
+        document = fitz.open()
+        _ = document.new_page()
+        payload = document.tobytes()
+        document.close()
+        return payload
 
 
 async def test_consultation_pdf_uses_controlled_renderer_without_local_binary(
@@ -47,7 +64,7 @@ async def test_consultation_pdf_uses_controlled_renderer_without_local_binary(
     result = await service.render_consultation_pdf(1)
 
     # Then: the same searchable report markup reaches that boundary exactly once.
-    assert result == b"%PDF-controlled"
+    assert result.startswith(b"%PDF")
     assert renderer.calls == 1
     assert renderer.markup is not None
     assert "공식 출처" in renderer.markup
@@ -125,6 +142,16 @@ async def test_secure_render_boundary_rejects_resource_markup(markup: str) -> No
 
     # Then: no renderer call can reach network, files, fonts, images, or media.
     assert renderer.calls == 0
+
+
+async def test_secure_render_boundary_rejects_unsearchable_injected_output() -> None:
+    # Given: a test or alternate renderer returns an openable blank PDF.
+    # When: it crosses the same final boundary as production WeasyPrint output.
+    with pytest.raises(pdf_module.PdfRenderError) as captured:
+        _ = await pdf_module.render_secure_pdf("<p>searchable consultation</p>", BlankPdfRenderer())
+
+    # Then: renderer injection cannot bypass searchable-output validation.
+    assert captured.value.code == "weasyprint_unsearchable_pdf"
 
 
 async def test_escaped_hostile_source_text_remains_printable(
