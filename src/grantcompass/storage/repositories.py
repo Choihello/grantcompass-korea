@@ -5,7 +5,7 @@ from sqlite3 import IntegrityError as SQLiteIntegrityError
 from typing import override
 
 from anyio.lowlevel import checkpoint
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -171,13 +171,20 @@ class ProgramRepository:
                         AttachmentRow.notice_version_id == int(notice_version_id),
                         AttachmentRow.parse_status.in_(("pending", "failed", "missing")),
                     )
-                    .order_by(AttachmentRow.id)
+                    .order_by(
+                        case((AttachmentRow.parse_status == "pending", 0), else_=1),
+                        AttachmentRow.id,
+                    )
+                    .limit(_MAX_ATTACHMENTS_PER_NOTICE)
                 )
             )
-        rows = {(row.filename, row.download_url): row.id for row in pending}
-        for attachment in attachments[:_MAX_ATTACHMENTS_PER_NOTICE]:
-            attachment_id = rows.get((attachment.filename, str(attachment.download_url)))
-            if attachment_id is None:
+        source_attachments = {
+            (attachment.filename, str(attachment.download_url)): attachment
+            for attachment in attachments
+        }
+        for row in pending:
+            attachment = source_attachments.get((row.filename, row.download_url))
+            if attachment is None:
                 continue
             try:
                 content = await downloader.fetch(attachment)
@@ -185,13 +192,13 @@ class ProgramRepository:
                 async with self._session.begin():
                     ingestor = DocumentIngestor(self._session)
                     if error.code == "attachment_missing":
-                        _ = await ingestor.mark_missing(attachment_id, "attachment_missing")
+                        _ = await ingestor.mark_missing(row.id, "attachment_missing")
                     else:
-                        _ = await ingestor.mark_failed(attachment_id, error.code)
+                        _ = await ingestor.mark_failed(row.id, error.code)
                 continue
             async with self._session.begin():
                 _ = await DocumentIngestor(self._session).ingest(
-                    attachment_id,
+                    row.id,
                     content,
                     attachment.filename,
                 )

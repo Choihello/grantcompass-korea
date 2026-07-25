@@ -67,6 +67,26 @@ def _notice(source: SourceName, notice_id: str, *, announcement_date: date | Non
     )
 
 
+def _notice_with_attachment_batch(size: int) -> RawNotice:
+    notice = _notice(
+        SourceName.BIZINFO,
+        "official-batch-progress",
+        announcement_date=ANNOUNCEMENT_DATE,
+    )
+    return notice.model_copy(
+        update={
+            "attachments": tuple(
+                AttachmentRef(
+                    filename=f"eligibility-{index:02d}.hwpx",
+                    download_url=HttpUrl(f"https://93.184.216.34/eligibility-{index:02d}.hwpx"),
+                    media_type="application/hwp+zip",
+                )
+                for index in range(size)
+            )
+        }
+    )
+
+
 async def _create_profile_and_company(database_url: str) -> int:
     engine = create_engine(database_url)
     try:
@@ -274,5 +294,58 @@ async def test_official_attachment_download_failure_is_durable_and_visible(tmp_p
             assert attachment.parse_status == "failed"
             assert attachment.parse_error_code == "download_failed"
             assert attachment.requires_review is True
+    finally:
+        await engine.dispose()
+
+
+async def test_official_attachment_batches_advance_past_failed_rows_without_pending_starvation(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'official-batch-progress.db'}"
+    await initialize_database(database_url)
+    notice = _notice_with_attachment_batch(21)
+    document = (DOCUMENT_FIXTURES / "eligibility-table.hwpx").read_bytes()
+    observed_paths: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        observed_paths.append(request.url.path)
+        if request.url.path.endswith("eligibility-20.hwpx"):
+            return httpx2.Response(
+                200,
+                headers={"Content-Type": "application/hwp+zip"},
+                content=document,
+                request=request,
+            )
+        return httpx2.Response(503, request=request)
+
+    dependencies = make_dependencies(
+        database_url,
+        (OneNoticeAdapter(notice),),
+        bizinfo_key="synthetic-key",
+        client_factory=lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
+    )
+
+    _ = await synchronize_sources(dependencies, SourceSelection.BIZINFO)
+    first_batch = tuple(observed_paths)
+    _ = await synchronize_sources(dependencies, SourceSelection.BIZINFO)
+    second_batch = tuple(observed_paths[len(first_batch) :])
+
+    assert first_batch == tuple(f"/eligibility-{index:02d}.hwpx" for index in range(20))
+    assert len(second_batch) == 20
+    assert second_batch[0] == "/eligibility-20.hwpx"
+
+    engine = create_engine(database_url)
+    try:
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            rows = (await session.scalars(select(AttachmentRow).order_by(AttachmentRow.id))).all()
+            assert (rows[-1].filename, rows[-1].parse_status) == (
+                "eligibility-20.hwpx",
+                "parsed",
+            )
+            assert sum(row.parse_status == "failed" for row in rows) == 20
+            assert all(row.parse_status != "pending" for row in rows)
+            assert await session.scalar(select(func.count(EligibilityRuleRow.id))) == 1
+            assert await session.scalar(select(func.count(EvidenceRow.id))) == 1
     finally:
         await engine.dispose()

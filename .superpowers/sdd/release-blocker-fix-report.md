@@ -297,3 +297,76 @@ boundaries:
 These limitations do not weaken deterministic pipeline, persistence,
 freshness, PDF-output validation, migration, app-isolation, or package
 verification.
+
+## Fix Round 1: bounded attachment progress
+
+Independent review found that `process_notice_attachments` queried every
+retryable attachment row but always iterated `attachments[:20]`. After the
+first 20 became parsed/failed/missing, later invocations still retried that
+same source-tuple prefix, so attachment 21 and later could remain permanently
+`pending`.
+
+### TDD regression
+
+`test_official_attachment_batches_advance_past_failed_rows_without_pending_starvation`
+creates one official notice with 21 attachments. Attachments 00-19 return a
+durable HTTP 503 download failure, while attachment 20 returns a valid HWPX.
+It invokes the real source-sync path twice and asserts:
+
+- the first invocation attempts exactly the stable 20-item `00..19` batch;
+- the second invocation remains capped at 20 but starts with attachment 20;
+- attachment 20 becomes parsed and creates exactly one rule and one evidence
+  row;
+- the first 20 failures remain durably `failed`;
+- no attachment remains permanently `pending`.
+
+RED command:
+
+```text
+python -m pytest tests/integration/test_release_pipeline.py::test_official_attachment_batches_advance_past_failed_rows_without_pending_starvation
+```
+
+RED result: **1 failed in 1.18s**. The second batch started with
+`/eligibility-00.hwpx` instead of `/eligibility-20.hwpx`, reproducing the
+reported starvation.
+
+### Implementation
+
+`src/grantcompass/storage/repositories.py` now:
+
+- orders retryable rows with never-attempted `pending` rows first and then by
+  stable attachment ID;
+- applies the 20-item ceiling to that database row query;
+- maps each selected row to its matching source attachment across the complete
+  source tuple;
+- processes exactly those selected row IDs through the unchanged bounded
+  downloader and durable missing/failed/parse persistence seams.
+
+This drains later never-attempted rows before retrying earlier visible
+failures, while preserving stable ordering, the per-invocation ceiling,
+failure retryability, and exact generated rule/evidence behavior.
+
+Final covering command:
+
+```text
+python -m pytest tests/integration/test_release_pipeline.py tests/integration/test_program_repository.py tests/unit/test_collector.py tests/unit/test_collector_completion.py
+```
+
+Final result: **21 passed in 9.67s**.
+
+Direct static verification:
+
+- `ruff check src/grantcompass/storage/repositories.py tests/integration/test_release_pipeline.py`:
+  **All checks passed**.
+- `ruff format --check src/grantcompass/storage/repositories.py tests/integration/test_release_pipeline.py`:
+  **2 files already formatted**.
+- `basedpyright`: **0 errors, 0 warnings, 0 notes**.
+- `git diff --check`: exit 0.
+
+Fix Round 1 changed files:
+
+```text
+src/grantcompass/storage/repositories.py
+tests/integration/test_release_pipeline.py
+.superpowers/sdd/release-blocker-fix-report.md
+```
