@@ -44,10 +44,8 @@ def build(output_root: Path) -> None:
         _ = (output_root / artifact.fixture_path).write_bytes(artifact.content)
         row = manifest_row(case, artifact)
         rows.append(json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
-    _ = (output_root / "documents.jsonl").write_text(
-        "\n".join(rows) + "\n",
-        encoding="utf-8",
-    )
+    manifest = ("\n".join(rows) + "\n").encode("utf-8")
+    _ = (output_root / "documents.jsonl").write_bytes(manifest)
 
 
 def main(argv: tuple[str, ...] | None = None) -> None:
