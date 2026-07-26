@@ -141,3 +141,18 @@ def test_skill_is_included_at_stable_wheel_and_sdist_paths() -> None:
     assert (
         '"skills/grantcompass-korea" = "grantcompass/skills/grantcompass-korea"' in wheel_contract
     )
+
+
+def test_migrations_are_included_at_stable_wheel_and_sdist_paths() -> None:
+    configuration = PROJECT_CONFIG.read_text(encoding="utf-8")
+    wheel_contract = configuration.split(
+        "[tool.hatch.build.targets.wheel.force-include]", maxsplit=1
+    )[1].split("[", maxsplit=1)[0]
+    sdist_contract = configuration.split("[tool.hatch.build.targets.sdist]", maxsplit=1)[1].split(
+        "\n[dependency-groups]", maxsplit=1
+    )[0]
+
+    assert '"migrations" = "grantcompass/migrations"' in wheel_contract
+    assert '"alembic.ini" = "grantcompass/alembic.ini"' in wheel_contract
+    assert '"/migrations"' in sdist_contract
+    assert '"/alembic.ini"' in sdist_contract

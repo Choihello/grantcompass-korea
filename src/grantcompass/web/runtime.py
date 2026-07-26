@@ -1,10 +1,11 @@
 """Typed application resources for institution request handlers."""
 
 from dataclasses import dataclass
-from typing import cast
+from typing import ClassVar
 from weakref import WeakKeyDictionary
 
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -32,6 +33,12 @@ class _RuntimeRegistry:
 _REGISTRY = _RuntimeRegistry(WeakKeyDictionary())
 
 
+class _RequestScope(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(arbitrary_types_allowed=True)
+
+    app: Starlette
+
+
 def register_runtime(app: Starlette, runtime: WebRuntime) -> None:
     """Associate typed resources with one application instance."""
     _REGISTRY.runtimes[app] = runtime
@@ -44,7 +51,7 @@ def get_runtime(app: Starlette) -> WebRuntime:
 
 def runtime_for(request: Request) -> WebRuntime:
     """Return resources bound to the application handling this request."""
-    return get_runtime(cast("Starlette", request.app))
+    return get_runtime(_RequestScope.model_validate(request.scope).app)
 
 
 def remove_runtime(app: Starlette) -> WebRuntime | None:

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import assert_never, final
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.domain.documents import DocumentBlockId, DocumentId, Evidence, EvidenceId
@@ -23,7 +23,8 @@ from grantcompass.storage.table_documents import (
     rule_evidence,
 )
 from grantcompass.storage.table_eligibility import EligibilityRuleRow
-from grantcompass.storage.table_programs import ProgramRow
+from grantcompass.storage.table_notice_analysis import CurrentNoticeVersionRow
+from grantcompass.storage.table_programs import AttachmentRow, ProgramRow
 
 _EXPECTED_VALUE: TypeAdapter[ExpectedValue] = TypeAdapter(ExpectedValue)
 
@@ -67,7 +68,25 @@ class ProgramQueryRepository:
         rule_rows = (
             await self._session.scalars(
                 select(EligibilityRuleRow)
+                .outerjoin(
+                    DocumentRow,
+                    DocumentRow.id == EligibilityRuleRow.source_document_id,
+                )
+                .outerjoin(
+                    AttachmentRow,
+                    AttachmentRow.id == DocumentRow.attachment_id,
+                )
+                .outerjoin(
+                    CurrentNoticeVersionRow,
+                    CurrentNoticeVersionRow.version_id == AttachmentRow.notice_version_id,
+                )
                 .where(EligibilityRuleRow.program_id == row.id)
+                .where(
+                    or_(
+                        EligibilityRuleRow.source_document_id.is_(None),
+                        CurrentNoticeVersionRow.id.is_not(None),
+                    )
+                )
                 .order_by(EligibilityRuleRow.id)
             )
         ).all()

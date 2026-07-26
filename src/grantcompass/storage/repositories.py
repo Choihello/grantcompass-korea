@@ -173,11 +173,14 @@ class ProgramRepository:
                     )
                     .order_by(
                         case((AttachmentRow.parse_status == "pending", 0), else_=1),
+                        AttachmentRow.attempt_count,
                         AttachmentRow.id,
                     )
                     .limit(_MAX_ATTACHMENTS_PER_NOTICE)
                 )
             )
+            for row in pending:
+                row.attempt_count += 1
         source_attachments = {
             (attachment.filename, str(attachment.download_url)): attachment
             for attachment in attachments

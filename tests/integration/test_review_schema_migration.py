@@ -15,8 +15,8 @@ def test_review_integrity_migration_upgrades_and_downgrades(tmp_path: Path) -> N
     config.set_main_option("sqlalchemy.url", async_url)
     command.upgrade(config, "0004_attachment_parse_evidence")
 
-    # When: review integrity is upgraded to head.
-    command.upgrade(config, "head")
+    # When: review integrity is upgraded to its own revision.
+    command.upgrade(config, "0005_review_integrity")
 
     # Then: durable error context and a non-null zero revision exist.
     engine = create_engine(sync_url)

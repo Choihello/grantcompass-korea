@@ -159,7 +159,7 @@ async def test_clean_manual_upload_reaches_rules_evidence_founder_and_institutio
             assert rule.review_status == ReviewStatus.REVIEW_REQUIRED.value
             assert rule.source_document_id == evidence.document_id
             assert block_text == "업력 3년 이내"
-            assert evidence.source_url.startswith("grantcompass://documents/")
+            assert evidence.source_url == str(notice.detail_url)
             assert program.reference_date == COLLECTED_AT.date()
             assert program.reference_date_source == "collected_at_fallback"
             assert version.announcement_date is None
@@ -349,3 +349,257 @@ async def test_official_attachment_batches_advance_past_failed_rows_without_pend
             assert await session.scalar(select(func.count(EvidenceRow.id))) == 1
     finally:
         await engine.dispose()
+
+
+async def test_failed_current_notice_never_falls_back_to_historical_generated_rules(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'current-rules-failed.db'}"
+    await initialize_database(database_url)
+    source_id = "current-rules-failed"
+    base = _notice(SourceName.BIZINFO, source_id, announcement_date=ANNOUNCEMENT_DATE)
+    variants = tuple(
+        base.model_copy(
+            update={
+                "attachments": (
+                    AttachmentRef(
+                        filename=f"eligibility-{variant}.hwpx",
+                        download_url=HttpUrl(f"https://93.184.216.34/eligibility-{variant}.hwpx"),
+                        media_type="application/hwp+zip",
+                    ),
+                ),
+                "raw_payload": freeze_json_object({"variant": variant}),
+            }
+        )
+        for variant in ("a", "b")
+    )
+    payloads = {
+        "/eligibility-a.hwpx": (DOCUMENT_FIXTURES / "eligibility-table.hwpx").read_bytes(),
+        "/eligibility-b.hwpx": (DOCUMENT_FIXTURES / "merged-cells.hwpx").read_bytes(),
+    }
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            headers={"Content-Type": "application/hwp+zip"},
+            content=payloads[request.url.path],
+            request=request,
+        )
+
+    profile_id = await _create_profile_and_company(database_url)
+    for notice in variants:
+        dependencies = make_dependencies(
+            database_url,
+            (OneNoticeAdapter(notice),),
+            bizinfo_key="synthetic-key",
+            client_factory=lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
+        )
+        _ = await synchronize_sources(dependencies, SourceSelection.BIZINFO)
+
+    search = await search_programs(database_url, str(profile_id), LATE_INVOCATION)
+    assert len(search.output.results) == 1
+    assert search.output.results[0].input_errors == ("missing_rules",)
+    assert search.output.results[0].conditions == ()
+
+    engine = create_engine(database_url)
+    try:
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            program_id = int((await session.scalars(select(ProgramRow.id))).one())
+            await session.rollback()
+            reverse = await ReverseMatchingService(session).reverse_match(
+                ProgramId(program_id),
+                LATE_INVOCATION,
+            )
+            assert reverse[0].assessment is None
+            assert reverse[0].input_error is not None
+    finally:
+        await engine.dispose()
+
+
+async def test_recurrence_uses_only_each_current_version_in_forward_and_reverse_matching(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'current-rules-recurrence.db'}"
+    await initialize_database(database_url)
+    source_id = "current-rules-recurrence"
+    base = _notice(SourceName.BIZINFO, source_id, announcement_date=ANNOUNCEMENT_DATE)
+    variants = {
+        "a": base.model_copy(
+            update={
+                "attachments": (
+                    AttachmentRef(
+                        filename="eligibility-a.hwpx",
+                        download_url=HttpUrl("https://93.184.216.34/eligibility-a.hwpx"),
+                        media_type="application/hwp+zip",
+                    ),
+                ),
+                "raw_payload": freeze_json_object({"variant": "a"}),
+            }
+        ),
+        "b": base.model_copy(
+            update={
+                "attachments": (
+                    AttachmentRef(
+                        filename="eligibility-b.hwpx",
+                        download_url=HttpUrl("https://93.184.216.34/eligibility-b.hwpx"),
+                        media_type="application/hwp+zip",
+                    ),
+                ),
+                "raw_payload": freeze_json_object({"variant": "b"}),
+            }
+        ),
+    }
+    payloads = {
+        "/eligibility-a.hwpx": (DOCUMENT_FIXTURES / "eligibility-table.hwpx").read_bytes(),
+        "/eligibility-b.hwpx": (
+            Path(__file__).parents[1] / "fixtures" / "benchmark" / "documents" / "case-05.hwpx"
+        ).read_bytes(),
+    }
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            headers={"Content-Type": "application/hwp+zip"},
+            content=payloads[request.url.path],
+            request=request,
+        )
+
+    profile_id = await _create_profile_and_company(database_url)
+    observed: list[ConditionStatus] = []
+    for variant in ("a", "b", "a", "b"):
+        dependencies = make_dependencies(
+            database_url,
+            (OneNoticeAdapter(variants[variant]),),
+            bizinfo_key="synthetic-key",
+            client_factory=lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
+        )
+        _ = await synchronize_sources(dependencies, SourceSelection.BIZINFO)
+        search = await search_programs(database_url, str(profile_id), LATE_INVOCATION)
+        observed.append(search.output.results[0].conditions[0].status)
+
+        engine = create_engine(database_url)
+        try:
+            factory = create_session_factory(engine)
+            async with factory() as session:
+                program_id = int((await session.scalars(select(ProgramRow.id))).one())
+                await session.rollback()
+                reverse = await ReverseMatchingService(session).reverse_match(
+                    ProgramId(program_id),
+                    LATE_INVOCATION,
+                )
+                assert reverse[0].assessment is not None
+                assert reverse[0].assessment.items[0].status is observed[-1]
+        finally:
+            await engine.dispose()
+
+    assert observed == [
+        ConditionStatus.SATISFIED,
+        ConditionStatus.UNSATISFIED,
+        ConditionStatus.SATISFIED,
+        ConditionStatus.UNSATISFIED,
+    ]
+
+
+async def test_production_parse_persists_official_urls_and_promotes_dual_source_conflict(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'official-conflict.db'}"
+    await initialize_database(database_url)
+    source_id = "official-conflict"
+    base = _notice(SourceName.KSTARTUP, source_id, announcement_date=ANNOUNCEMENT_DATE)
+    notices = (
+        base.model_copy(
+            update={
+                "detail_url": HttpUrl("https://official-a.example/notices/a"),
+                "attachments": (
+                    AttachmentRef(
+                        filename="eligibility-a.hwpx",
+                        download_url=HttpUrl("https://93.184.216.34/eligibility-a.hwpx"),
+                        media_type="application/hwp+zip",
+                    ),
+                ),
+                "raw_payload": freeze_json_object({"source": "a"}),
+            }
+        ),
+        base.model_copy(
+            update={
+                "source": SourceName.BIZINFO,
+                "detail_url": HttpUrl("https://official-b.example/notices/b"),
+                "attachments": (
+                    AttachmentRef(
+                        filename="eligibility-b.hwpx",
+                        download_url=HttpUrl("https://93.184.216.34/eligibility-b.hwpx"),
+                        media_type="application/hwp+zip",
+                    ),
+                ),
+                "raw_payload": freeze_json_object({"source": "b"}),
+            }
+        ),
+    )
+    payloads = {
+        "/eligibility-a.hwpx": (DOCUMENT_FIXTURES / "eligibility-table.hwpx").read_bytes(),
+        "/eligibility-b.hwpx": (
+            Path(__file__).parents[1] / "fixtures" / "benchmark" / "documents" / "case-05.hwpx"
+        ).read_bytes(),
+    }
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            headers={"Content-Type": "application/hwp+zip"},
+            content=payloads[request.url.path],
+            request=request,
+        )
+
+    dependencies = make_dependencies(
+        database_url,
+        (
+            OneNoticeAdapter(notices[0], SourceName.KSTARTUP),
+            OneNoticeAdapter(notices[1], SourceName.BIZINFO),
+        ),
+        kstartup_key="synthetic-key-a",
+        bizinfo_key="synthetic-key-b",
+        client_factory=lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
+    )
+    _ = await synchronize_sources(dependencies, SourceSelection.ALL)
+    profile_id = await _create_profile_and_company(database_url)
+
+    search = await search_programs(database_url, str(profile_id), LATE_INVOCATION)
+
+    assert len(search.output.results) == 1
+    result = search.output.results[0]
+    assert tuple(item.status for item in result.conditions) == (
+        ConditionStatus.CONFLICT,
+        ConditionStatus.CONFLICT,
+    )
+    assert {item.source_url for item in result.evidence} == {
+        "https://official-a.example/notices/a",
+        "https://official-b.example/notices/b",
+    }
+
+
+async def test_failed_attachment_retry_batches_rotate_fairly_across_forty_five_rows(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'official-retry-rotation.db'}"
+    await initialize_database(database_url)
+    notice = _notice_with_attachment_batch(45)
+    observed_paths: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        observed_paths.append(request.url.path)
+        return httpx2.Response(503, request=request)
+
+    dependencies = make_dependencies(
+        database_url,
+        (OneNoticeAdapter(notice),),
+        bizinfo_key="synthetic-key",
+        client_factory=lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
+    )
+    for _ in range(3):
+        _ = await synchronize_sources(dependencies, SourceSelection.BIZINFO)
+
+    assert observed_paths[:20] == [f"/eligibility-{index:02d}.hwpx" for index in range(20)]
+    assert observed_paths[20:40] == [f"/eligibility-{index:02d}.hwpx" for index in range(20, 40)]
+    assert observed_paths[40:45] == [f"/eligibility-{index:02d}.hwpx" for index in range(40, 45)]

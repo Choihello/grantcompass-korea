@@ -220,7 +220,7 @@ class DocumentIngestor:
                 evidence_row = EvidenceRow(
                     document_id=document.id,
                     block_id=block_row.id,
-                    source_url=evidence.source_url,
+                    source_url=notice.detail_url,
                     page=evidence.page,
                     section_path=evidence.section_path,
                     quote=evidence.quote,

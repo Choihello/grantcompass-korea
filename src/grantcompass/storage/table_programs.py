@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, Text, UniqueConstraint, text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from grantcompass.storage.table_base import Base
@@ -69,6 +69,7 @@ class AttachmentRow(Base):
     requires_review: Mapped[bool] = mapped_column(default=False, server_default=text("0"))
     parser_name: Mapped[str | None] = mapped_column(String(100))
     parser_version: Mapped[str | None] = mapped_column(String(100))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
 
 class SourceRunRow(Base):

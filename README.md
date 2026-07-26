@@ -62,6 +62,16 @@ upgrade:
 uv run alembic upgrade head
 ```
 
+Installed wheels also ship the same Alembic configuration and migration history. Resolve its
+stable path with `grantcompass.migration_resources.packaged_alembic_config()` and pass that path
+to `alembic -c`:
+
+```console
+uv run python -c "from grantcompass.migration_resources import packaged_alembic_config; print(packaged_alembic_config())"
+uv run alembic -c <printed-path> upgrade head
+uv run alembic -c <printed-path> check
+```
+
 Do not run the initial migration over a database already created by `db init`; choose one
 initialization path. Back up the SQLite file before upgrading an existing installation.
 

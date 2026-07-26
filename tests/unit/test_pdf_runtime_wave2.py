@@ -1,14 +1,10 @@
 import sys
-from io import BytesIO
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import anyio
 import fitz
 import pytest
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.pdfgen.canvas import Canvas
 
 from grantcompass.reports.pdf_runtime import PdfRenderError, WeasyPrintRenderer
 
@@ -16,20 +12,19 @@ pytestmark = pytest.mark.anyio
 
 
 def _searchable_pdf(text: str = "GrantCompass PDF") -> bytes:
-    stream = BytesIO()
-    pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))  # pyright: ignore[reportUnknownMemberType]
-    canvas = Canvas(stream)
-    canvas.setFont("HYSMyeongJo-Medium", 12)
-    canvas.drawString(72, 720, text)
-    canvas.save()
-    return stream.getvalue()
+    document = fitz.open()
+    page = document.new_page()
+    _ = page.insert_text((72, 72), text, fontname="korea", fontsize=12)
+    payload = document.tobytes()
+    document.close()
+    return payload
 
 
 def _unsearchable_pdf(*, image_only: bool) -> bytes:
     document = fitz.open()
     page = document.new_page()
     if image_only:
-        pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 8, 8), False)  # noqa: FBT003
+        pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 8, 8))
         _ = page.insert_image(fitz.Rect(72, 72, 144, 144), pixmap=pixmap)
     payload = document.tobytes()
     document.close()
@@ -157,7 +152,7 @@ async def test_valid_output_is_openable_with_a_page(
     monkeypatch.setenv("GRANTCOMPASS_WEASYPRINT_EXECUTABLE", str(executable))
 
     async def runner(argv: tuple[str, ...], _: bytes) -> CompletedProcess[bytes]:
-        return CompletedProcess(argv, 0, stdout=_searchable_pdf("정상 PDF"), stderr=b"")
+        return CompletedProcess(argv, 0, stdout=_searchable_pdf("Valid PDF"), stderr=b"")
 
     # When: production validation accepts its bytes.
     result = await WeasyPrintRenderer(process_runner=runner).render("<p>x</p>")
@@ -165,4 +160,4 @@ async def test_valid_output_is_openable_with_a_page(
     # Then: the accepted contract is a structurally usable PDF.
     with fitz.open(stream=result, filetype="pdf") as document:
         assert document.page_count == 1
-        assert "정상" in document[0].get_text()
+        assert "Valid PDF" in document[0].get_text()

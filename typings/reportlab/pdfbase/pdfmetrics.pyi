@@ -1,0 +1,3 @@
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+def registerFont(font: UnicodeCIDFont) -> None: ...

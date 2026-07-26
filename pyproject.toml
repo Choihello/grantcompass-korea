@@ -44,6 +44,8 @@ packages = ["src/grantcompass"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "skills/grantcompass-korea" = "grantcompass/skills/grantcompass-korea"
+"migrations" = "grantcompass/migrations"
+"alembic.ini" = "grantcompass/alembic.ini"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -53,7 +55,9 @@ include = [
     "/LICENSE",
     "/README.md",
     "/SECURITY.md",
+    "/alembic.ini",
     "/docs",
+    "/migrations",
     "/pyproject.toml",
     "/src",
     "/skills",
@@ -72,6 +76,7 @@ dev = [
 
 [tool.basedpyright]
 typeCheckingMode = "all"
+stubPath = "typings"
 pythonVersion = "3.12"
 pythonPlatform = "All"
 include = ["src", "tests"]

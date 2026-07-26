@@ -4,12 +4,12 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from grantcompass.cli.freshness import load_one_source_freshness
 from grantcompass.domain.enums import FreshnessStatus, SourceName
-from grantcompass.storage.table_documents import EvidenceRow, rule_evidence
+from grantcompass.storage.table_documents import DocumentRow, EvidenceRow, rule_evidence
 from grantcompass.storage.table_eligibility import EligibilityRuleRow
 from grantcompass.storage.table_notice_analysis import (
     ChangeSetRow,
@@ -160,7 +160,25 @@ async def get_program_detail(
     rules = (
         await session.scalars(
             select(EligibilityRuleRow)
+            .outerjoin(
+                DocumentRow,
+                DocumentRow.id == EligibilityRuleRow.source_document_id,
+            )
+            .outerjoin(
+                AttachmentRow,
+                AttachmentRow.id == DocumentRow.attachment_id,
+            )
+            .outerjoin(
+                CurrentNoticeVersionRow,
+                CurrentNoticeVersionRow.version_id == AttachmentRow.notice_version_id,
+            )
             .where(EligibilityRuleRow.program_id == program.id)
+            .where(
+                or_(
+                    EligibilityRuleRow.source_document_id.is_(None),
+                    CurrentNoticeVersionRow.id.is_not(None),
+                )
+            )
             .order_by(EligibilityRuleRow.id)
         )
     ).all()

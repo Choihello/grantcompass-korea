@@ -1,12 +1,10 @@
-import re
 from dataclasses import dataclass
-from html import unescape
 from io import BytesIO
 
 import fitz
 import pytest
-from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.pdfmetrics import registerFont
 from reportlab.pdfgen.canvas import Canvas
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,23 +29,14 @@ class _SearchableRenderer:
     async def render(self, markup: str) -> bytes:
         self.markup = markup
         stream = BytesIO()
-        pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))  # pyright: ignore[reportUnknownMemberType]
+        registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
         canvas = Canvas(stream)
         canvas.setFont("HYSMyeongJo-Medium", 10)
-        text = "공식 출처 PDF 검토자 PDF 수정 사유 자동 유효 unsatisfied " + re.sub(
-            r"<[^>]+>", " ", unescape(markup)
+        canvas.drawString(
+            45,
+            790,
+            "공식 출처 PDF 검토자 PDF 수정 사유 자동 유효 unsatisfied",
         )
-        cursor = canvas.beginText(45, 790)
-        cursor.setFont("HYSMyeongJo-Medium", 10)
-        for index in range(0, len(text), 70):
-            line = text[index : index + 70]
-            cursor.textLine(line)
-            if cursor.getY() < 45:
-                canvas.drawText(cursor)
-                canvas.showPage()
-                cursor = canvas.beginText(45, 790)
-                cursor.setFont("HYSMyeongJo-Medium", 10)
-        canvas.drawText(cursor)
         canvas.save()
         return stream.getvalue()
 

@@ -370,3 +370,206 @@ src/grantcompass/storage/repositories.py
 tests/integration/test_release_pipeline.py
 .superpowers/sdd/release-blocker-fix-report.md
 ```
+
+## Final Whole-Branch Fix Wave
+
+This wave started from exact HEAD
+`460e24a609161827774d9790eb795e762ab9c453` and closes the seven findings from
+the final whole-branch review. The pre-existing
+`.superpowers/sdd/task-9-report.md` modification and all unrelated untracked
+evidence, browser, cache, temporary, and XML artifacts were kept out of this
+change.
+
+### 1. Current-version generated rules only
+
+Both `ProgramQueryRepository` and the institution program-detail query now
+retain authored rules whose `source_document_id` is null, but generated rules
+must join through:
+
+```text
+eligibility_rules -> documents -> attachments -> current_notice_versions
+```
+
+Historical generated rules can no longer affect forward search, reverse
+matching, or the institution detail surface. Production-path regressions cover
+a usable A version followed by a B version with no usable rules, plus
+A -> B -> A -> B recurrence with alternating satisfied/unsatisfied outcomes.
+The current B failure returns `missing_rules`; it never falls back to A.
+
+### 2. Official evidence source identity
+
+Rule-candidate validation still uses the exact internal document coordinate
+while parsing. At persistence, generated evidence now records the owning
+notice's canonical HTTP(S) `detail_url` as `EvidenceRow.source_url`, retaining
+the original document ID, block ID, page/section, quote, and content hash.
+
+A clean two-source official sync parses independent three-year and one-year
+HWPX documents, persists
+`https://official-a.example/notices/a` and
+`https://official-b.example/notices/b`, and promotes both contradictory
+conditions to `conflict` without seeded HTTP evidence.
+
+### 3. Recurrence-safe migration contract
+
+Revision `0006_release_blockers` is explicitly irreversible. Its downgrade
+raises a stable diagnostic before the first Alembic mutation because recurrence
+permits multiple change rows for one current version and cannot satisfy the
+removed uniqueness contract. The populated migration regression upgrades,
+stores duplicate-current recurrence history, attempts the downgrade, and
+proves table inventory, rows, revision, and release columns remain unchanged.
+
+The earlier `0005_review_integrity` round-trip test now targets revision 0005
+directly so it continues to verify its own reversible contract without crossing
+the intentionally irreversible 0006 boundary.
+
+### 4. Durable fair attachment retry rotation
+
+Attachments now persist a non-null `attempt_count` with migration/ORM parity.
+The bounded retry query orders pending rows first, then by attempt count and
+stable ID, and increments the selected rows in a committed transaction before
+download. Repeated 20-row batches therefore rotate fairly after all rows have
+failed. A 45-row production source-sync regression proves the first three
+invocations reach rows `00..19`, `20..39`, and `40..44`.
+
+### 5. Installed migration artifacts
+
+Wheel and sdist configuration now ships `alembic.ini` and the complete
+`migrations` tree. Alembic paths are based on `%(here)s`, and
+`grantcompass.migration_resources.packaged_alembic_config()` exposes the stable
+installed configuration path documented in the README.
+
+The installed-artifact regression builds a fresh wheel, installs only that
+wheel into an isolated target, resolves the configuration from the installed
+package, and runs real `upgrade head` and `check` commands from a clean runtime
+directory.
+
+The fresh pre-commit artifact inspection produced:
+
+```text
+wheel  ed0310e776a6e1604f2485cb903efe7e6a13fde6d274a6f28a9affe7ffc7b4b3
+sdist  fc70e1f5e6d3af46e40802d98f615f7ab17d38b0db3a035dd223d320b47197b9
+```
+
+The wheel contains
+`grantcompass/alembic.ini`,
+`grantcompass/migrations/versions/0006_release_blockers.py`, and
+`grantcompass/skills/grantcompass-korea/SKILL.md`. The sdist contains the
+corresponding root migration/configuration and Skill paths. Neither archive
+contains `.superpowers`, `.omo`, task, cache, or debug-journal paths.
+
+### 6. Exact-HEAD evidence boundary
+
+All code, tests, package metadata, documentation, and this report are committed
+before the final release matrix is executed. Because a commit cannot truthfully
+self-reference its own SHA, the exact final SHA, fresh exact-HEAD artifact
+hashes, commands, and results are recorded after the commit in the ignored,
+plan-specific ledger:
+
+```text
+.omo/evidence/final-whole-branch-<exact-sha>/ledger.md
+```
+
+No tracked file is changed after that evidence run.
+
+### 7. Typing escape removal
+
+The ASGI manual-body limiter and web runtime now validate untyped Starlette
+scope/message data into narrow Pydantic boundary models. The two PDF fixtures
+no longer use inline type or lint suppression, and a narrow local ReportLab
+stub supplies the missing third-party `registerFont` signature.
+
+`test_typing_escape_contract.py` parses all Python under `src` and `tests` and
+fails on type-level names `Any`, `object`, or `cast`, as well as `type: ignore`,
+`pyright: ignore`, and `noqa` comments. The repository-wide basedpyright gate
+reports zero errors and zero warnings.
+
+### RED and GREEN evidence
+
+The combined initial focused run reproduced all intended failures:
+
+```text
+python -m pytest \
+  tests/integration/test_release_pipeline.py::test_failed_current_notice_never_falls_back_to_historical_generated_rules \
+  tests/integration/test_release_pipeline.py::test_recurrence_uses_only_each_current_version_in_forward_and_reverse_matching \
+  tests/integration/test_release_pipeline.py::test_production_parse_persists_official_urls_and_promotes_dual_source_conflict \
+  tests/integration/test_release_pipeline.py::test_failed_attachment_retry_batches_rotate_fairly_across_forty_five_rows \
+  tests/integration/test_release_schema_migration.py \
+  tests/unit/test_skill_contract.py::test_migrations_are_included_at_stable_wheel_and_sdist_paths \
+  tests/unit/test_typing_escape_contract.py -q
+```
+
+RED result: **7 failed, 1 passed in 6.08s**. The failures were the historical
+rule fallback, missing recurrence switching, absent HTTP conflict promotion,
+missing retry column, mutating downgrade, absent migration packaging, and
+typing escapes.
+
+After implementation, the same focused set was GREEN:
+
+```text
+8 passed in 5.42s
+```
+
+The real wheel-only installed migration regression was separately GREEN:
+
+```text
+1 passed in 5.82s
+```
+
+### Pre-commit release matrix
+
+```text
+ruff check src tests migrations
+All checks passed!
+
+ruff format --check src tests migrations
+214 files already formatted
+
+basedpyright
+0 errors, 0 warnings, 0 notes
+
+pytest -q
+584 passed, 1 skipped in 126.48s
+
+pytest tests/integration/test_document_benchmark.py \
+  tests/integration/test_assessment_benchmark.py -q
+6 passed in 12.55s
+
+git diff --check
+exit 0
+```
+
+The single skip remains the previously documented native WeasyPrint loader
+boundary on this host. PDF structure/searchability behavior is covered by the
+portable subprocess and deterministic fixture tests.
+
+### Intended files in this wave
+
+```text
+README.md
+alembic.ini
+migrations/versions/0006_release_blockers.py
+pyproject.toml
+src/grantcompass/cli/program_queries.py
+src/grantcompass/documents/ingest.py
+src/grantcompass/migration_resources.py
+src/grantcompass/storage/repositories.py
+src/grantcompass/storage/table_programs.py
+src/grantcompass/web/queries.py
+src/grantcompass/web/request_limits.py
+src/grantcompass/web/runtime.py
+tests/integration/test_installed_migration_artifact.py
+tests/integration/test_pdf_report_output.py
+tests/integration/test_release_pipeline.py
+tests/integration/test_release_schema_migration.py
+tests/integration/test_review_schema_migration.py
+tests/unit/test_pdf_runtime_wave2.py
+tests/unit/test_skill_contract.py
+tests/unit/test_typing_escape_contract.py
+typings/reportlab/pdfbase/pdfmetrics.pyi
+.superpowers/sdd/release-blocker-fix-report.md
+```
+
+No live official credentials or external source calls were used. The clean
+manual upload, official sync, institution reverse matching, dual-source
+conflict, current-version recurrence, and 45-row retry scenarios all exercise
+the production paths against fresh local databases and synthetic public URLs.
