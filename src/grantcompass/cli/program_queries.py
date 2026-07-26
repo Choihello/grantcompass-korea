@@ -27,7 +27,6 @@ from grantcompass.storage.table_notice_analysis import CurrentNoticeVersionRow
 from grantcompass.storage.table_programs import AttachmentRow, ProgramRow
 
 _EXPECTED_VALUE: TypeAdapter[ExpectedValue] = TypeAdapter(ExpectedValue)
-_DANGLING_EVIDENCE_RELATION = "dangling_evidence_relation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,8 +199,13 @@ class ProgramQueryRepository:
             .order_by(rule_evidence.c.rule_id, EvidenceRow.id)
         )
         loaded: dict[int, list[Evidence]] = {}
+        invalid_rule_ids: set[int] = set()
         for rule, row, document, block in result.tuples():
-            evidence, source, part = _validated_evidence_relation(row, document, block)
+            relation = _validated_evidence_relation(row, document, block)
+            if relation is None:
+                invalid_rule_ids.add(rule.id)
+                continue
+            evidence, source, part = relation
             loaded.setdefault(rule.id, []).append(
                 Evidence(
                     id=EvidenceId(evidence.id),
@@ -214,6 +218,8 @@ class ProgramQueryRepository:
                     content_hash=evidence.content_hash,
                 )
             )
+        for rule_id in invalid_rule_ids:
+            _ = loaded.pop(rule_id, None)
         return {rule_id: tuple(items) for rule_id, items in loaded.items()}
 
 
@@ -221,9 +227,9 @@ def _validated_evidence_relation(
     evidence: EvidenceRow | None,
     document: DocumentRow | None,
     block: DocumentBlockRow | None,
-) -> tuple[EvidenceRow, DocumentRow, DocumentBlockRow]:
+) -> tuple[EvidenceRow, DocumentRow, DocumentBlockRow] | None:
     if evidence is None or document is None or block is None or block.document_id != document.id:
-        raise LookupError(_DANGLING_EVIDENCE_RELATION)
+        return None
     return evidence, document, block
 
 

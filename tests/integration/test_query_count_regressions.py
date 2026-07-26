@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import delete, event, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from grantcompass.cli.program_queries import ProgramQueryRepository
 from grantcompass.domain.ids import ProgramId
+from grantcompass.domain.reverse import CompanyInputErrorCode
 from grantcompass.matching.reverse import ReverseMatchingService
 from grantcompass.storage.table_cases import AuditEventRow, CaseRow, ManagedCompanyRow
 from grantcompass.storage.table_documents import DocumentBlockRow
@@ -313,12 +313,25 @@ async def test_latest_matches_batches_populated_profiles_conditions_and_audits(
     assert len(statements) == 4, tuple(statements)
 
 
-async def test_program_rule_loading_rejects_dangling_evidence_relations(
+async def test_reverse_matching_surfaces_dangling_evidence_as_finite_missing_evidence(
     db_session: AsyncSession,
 ) -> None:
-    # An inner join that drops corrupt evidence would silently degrade this to missing_evidence.
+    # A raw query-layer integrity exception would crash the complete reverse-matching run.
     program = await seed_program(db_session)
     _ = await seed_rule(db_session, program)
+    profile = ApplicantProfileRow(
+        display_name="손상 증거 기업",
+        founded_on=date(2025, 1, 1),
+        regions_json='["KR-11"]',
+        representative_birth_year=1990,
+        industries_json='["software"]',
+        performance_json="{}",
+        benefit_history_json="[]",
+        created_at=REFERENCE_TIME,
+    )
+    db_session.add(profile)
+    await db_session.flush()
+    db_session.add(ManagedCompanyRow(profile_id=profile.id, owner_name="합성 대표", active=True))
     await db_session.commit()
     _ = await db_session.execute(text("PRAGMA foreign_keys=OFF"))
     _ = await db_session.execute(delete(DocumentBlockRow))
@@ -326,5 +339,11 @@ async def test_program_rule_loading_rejects_dangling_evidence_relations(
     _ = await db_session.execute(text("PRAGMA foreign_keys=ON"))
     await db_session.commit()
 
-    with pytest.raises(LookupError, match=r"^dangling_evidence_relation$"):
-        _ = await ProgramQueryRepository(db_session).get_program_rules(ProgramId(program.id))
+    results = await ReverseMatchingService(db_session).reverse_match(
+        ProgramId(program.id), REFERENCE_TIME
+    )
+
+    assert len(results) == 1
+    assert results[0].assessment is None
+    assert results[0].input_error is not None
+    assert results[0].input_error.code is CompanyInputErrorCode.MISSING_EVIDENCE
