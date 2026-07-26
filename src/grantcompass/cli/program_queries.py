@@ -27,6 +27,7 @@ from grantcompass.storage.table_notice_analysis import CurrentNoticeVersionRow
 from grantcompass.storage.table_programs import AttachmentRow, ProgramRow
 
 _EXPECTED_VALUE: TypeAdapter[ExpectedValue] = TypeAdapter(ExpectedValue)
+_DANGLING_EVIDENCE_RELATION = "dangling_evidence_relation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,27 +193,38 @@ class ProgramQueryRepository:
                 DocumentBlockRow,
             )
             .join(rule_evidence, rule_evidence.c.rule_id == EligibilityRuleRow.id)
-            .join(EvidenceRow, rule_evidence.c.evidence_id == EvidenceRow.id)
-            .join(DocumentRow, DocumentRow.id == EvidenceRow.document_id)
-            .join(DocumentBlockRow, DocumentBlockRow.id == EvidenceRow.block_id)
+            .outerjoin(EvidenceRow, rule_evidence.c.evidence_id == EvidenceRow.id)
+            .outerjoin(DocumentRow, DocumentRow.id == EvidenceRow.document_id)
+            .outerjoin(DocumentBlockRow, DocumentBlockRow.id == EvidenceRow.block_id)
             .where(rule_evidence.c.rule_id.in_(rule_ids))
             .order_by(rule_evidence.c.rule_id, EvidenceRow.id)
         )
         loaded: dict[int, list[Evidence]] = {}
         for rule, row, document, block in result.tuples():
+            evidence, source, part = _validated_evidence_relation(row, document, block)
             loaded.setdefault(rule.id, []).append(
                 Evidence(
-                    id=EvidenceId(row.id),
-                    document_id=DocumentId(str(document.id)),
-                    block_id=DocumentBlockId(block.source_block_id or str(block.id)),
-                    source_url=row.source_url,
-                    page=row.page,
-                    section_path=row.section_path,
-                    quote=row.quote,
-                    content_hash=row.content_hash,
+                    id=EvidenceId(evidence.id),
+                    document_id=DocumentId(str(source.id)),
+                    block_id=DocumentBlockId(part.source_block_id or str(part.id)),
+                    source_url=evidence.source_url,
+                    page=evidence.page,
+                    section_path=evidence.section_path,
+                    quote=evidence.quote,
+                    content_hash=evidence.content_hash,
                 )
             )
         return {rule_id: tuple(items) for rule_id, items in loaded.items()}
+
+
+def _validated_evidence_relation(
+    evidence: EvidenceRow | None,
+    document: DocumentRow | None,
+    block: DocumentBlockRow | None,
+) -> tuple[EvidenceRow, DocumentRow, DocumentBlockRow]:
+    if evidence is None or document is None or block is None or block.document_id != document.id:
+        raise LookupError(_DANGLING_EVIDENCE_RELATION)
+    return evidence, document, block
 
 
 def _unique_evidence(items: list[Evidence]) -> tuple[Evidence, ...]:
