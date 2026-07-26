@@ -4,6 +4,7 @@
 <header class="page-head"><div><div class="kicker">Manual notice desk</div><h1>기관 자체사업 등록</h1><p class="muted">기관 공고도 동일한 출처·문서·근거 파이프라인에 기록합니다.</p></div></header>
 <section class="sheet" style="max-width:820px;margin-top:24px">
 <form class="stack" action="/programs/manual" method="post" enctype="multipart/form-data">
+  <input name="csrf_token" type="hidden" value="{{ request.state.csrf_token }}">
   <div><label for="title">사업명</label><input id="title" name="title" required></div>
   <div class="form-grid"><div><label for="organization">주관기관</label><input id="organization" name="organization" required></div><div><label for="application_end">접수 마감</label><input id="application_end" name="application_end" type="date" required></div></div>
   <div><label for="source_url">공식 원문 URL</label><input id="source_url" name="source_url" type="url" required placeholder="https://"></div>

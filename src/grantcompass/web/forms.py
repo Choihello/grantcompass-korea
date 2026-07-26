@@ -21,6 +21,7 @@ class AttributionForm(BaseModel):
 
     actor: str
     reason: str
+    csrf_token: str = Field(default="", exclude=True)
 
 
 class ReviewConditionForm(BaseModel):

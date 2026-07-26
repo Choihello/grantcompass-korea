@@ -15,6 +15,7 @@ from grantcompass.domain.reverse import (
     ReverseMatchingErrorCode,
 )
 from grantcompass.storage.table_cases import ManagedCompanyRow
+from grantcompass.storage.table_eligibility import ApplicantProfileRow
 from grantcompass.storage.table_notice_analysis import CurrentNoticeVersionRow
 from grantcompass.storage.table_programs import NoticeVersionRow
 
@@ -34,7 +35,15 @@ class ReverseInputs:
     """Complete immutable database input for one reverse-matching run."""
 
     context: MatchContext
-    companies: tuple[ManagedCompanyRow, ...]
+    companies: tuple["ReverseCompanyInput", ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseCompanyInput:
+    """Managed-company row and its batch-loaded applicant profile."""
+
+    company: ManagedCompanyRow
+    profile: ApplicantProfileRow | None
 
 
 async def load_reverse_inputs(
@@ -44,7 +53,17 @@ async def load_reverse_inputs(
     """Load program, notice identity, and managed candidates in one transaction."""
     program = await _program_record(session, program_id)
     identities, latest_hash, identity_error = await _content_identities(session, program_id)
-    companies = tuple((await session.scalars(select(ManagedCompanyRow))).all())
+    company_rows = await session.execute(
+        select(ManagedCompanyRow, ApplicantProfileRow)
+        .outerjoin(
+            ApplicantProfileRow,
+            ApplicantProfileRow.id == ManagedCompanyRow.profile_id,
+        )
+        .order_by(ManagedCompanyRow.id)
+    )
+    companies = tuple(
+        ReverseCompanyInput(company, profile) for company, profile in company_rows.tuples()
+    )
     return ReverseInputs(
         MatchContext(program, identities, latest_hash, identity_error),
         companies,
@@ -52,11 +71,10 @@ async def load_reverse_inputs(
 
 
 async def _program_record(session: AsyncSession, program_id: ProgramId) -> ProgramRules:
-    records = await ProgramQueryRepository(session).list_program_rules()
-    for record in records:
-        if record.program.id == program_id:
-            return record
-    raise ReverseMatchingError(ReverseMatchingErrorCode.UNKNOWN_PROGRAM)
+    record = await ProgramQueryRepository(session).get_program_rules(program_id)
+    if record is None:
+        raise ReverseMatchingError(ReverseMatchingErrorCode.UNKNOWN_PROGRAM)
+    return record
 
 
 async def _content_identities(

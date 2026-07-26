@@ -1,10 +1,12 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from secrets import token_urlsafe
 
 import httpx2
 import pytest
 from fastapi import FastAPI
+from pydantic import SecretStr
 from sqlalchemy import select
 
 from grantcompass.config import Settings
@@ -13,6 +15,7 @@ from grantcompass.storage.table_cases import AuditEventRow, CaseRow
 from grantcompass.storage.table_eligibility import ApplicantProfileRow, AssessmentRow
 from grantcompass.storage.tables import Base
 from grantcompass.web.app import create_app, dispose_app, get_runtime
+from grantcompass.web.security import CSRF_COOKIE
 from tests.e2e.institution_seed import seed_institution
 
 pytestmark = pytest.mark.anyio
@@ -52,12 +55,46 @@ async def institution_client(tmp_path: Path) -> AsyncIterator[InstitutionHarness
     async with session_factory() as session:
         await seed_institution(session)
     await engine.dispose()
-    app = create_app(Settings(database_url=database_url))
+    app = create_app(
+        Settings(
+            database_url=database_url,
+            allowed_hosts=("institution.test",),
+            allowed_origins=("http://institution.test",),
+            csrf_signing_secret=SecretStr(token_urlsafe(32)),
+        )
+    )
+
+    async def authorize_mutation(request: httpx2.Request) -> None:
+        if request.method != "POST":
+            return
+        cookie_header = next(
+            (
+                value.decode("latin-1")
+                for key, value in request.headers.raw
+                if key.lower() == b"cookie"
+            ),
+            "",
+        )
+        cookie_token = next(
+            (
+                value
+                for item in cookie_header.split(";")
+                for key, separator, value in (item.strip().partition("="),)
+                if separator and key == CSRF_COOKIE
+            ),
+            "",
+        )
+        request.headers["Origin"] = "http://institution.test"
+        request.headers["X-CSRF-Token"] = cookie_token
+
     async with httpx2.AsyncClient(
         transport=httpx2.ASGITransport(app=app),
         base_url="http://institution.test",
         follow_redirects=False,
+        event_hooks={"request": [authorize_mutation]},
     ) as client:
+        primed = await client.get("/programs")
+        assert primed.status_code == 200
         yield InstitutionHarness(app, client)
     await dispose_app(app)
 

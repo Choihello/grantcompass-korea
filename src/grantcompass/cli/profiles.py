@@ -53,7 +53,7 @@ class ProfileRepository:
             )
             self._session.add(row)
             await self._session.flush()
-            return _profile_from_row(row)
+            return profile_from_row(row)
 
     async def resolve(self, selector: str) -> ApplicantProfile:
         """Resolve one numeric ID or one unambiguous exact display name."""
@@ -64,7 +64,7 @@ class ProfileRepository:
             )
             if row is None:
                 raise CliError(CliErrorCode.PROFILE_NOT_FOUND, 3)
-            return _profile_from_row(row)
+            return profile_from_row(row)
         rows = (
             await self._session.scalars(
                 select(ApplicantProfileRow)
@@ -76,10 +76,11 @@ class ProfileRepository:
             raise CliError(CliErrorCode.PROFILE_NOT_FOUND, 3)
         if len(rows) > 1:
             raise CliError(CliErrorCode.AMBIGUOUS_PROFILE_NAME, 3)
-        return _profile_from_row(rows[0])
+        return profile_from_row(rows[0])
 
 
-def _profile_from_row(row: ApplicantProfileRow) -> ApplicantProfile:
+def profile_from_row(row: ApplicantProfileRow) -> ApplicantProfile:
+    """Convert one batch-loaded persistence row through the profile boundary."""
     try:
         return ApplicantProfile(
             id=ApplicantProfileId(row.id),
@@ -100,3 +101,6 @@ def _profile_from_row(row: ApplicantProfileRow) -> ApplicantProfile:
 
 def _compact_json(values: tuple[str, ...]) -> str:
     return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
+
+
+__all__ = ["ProfileRepository", "profile_from_row"]

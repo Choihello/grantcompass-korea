@@ -49,10 +49,70 @@ class ProgramQueryRepository:
 
     async def list_program_rules(self) -> tuple[ProgramRules, ...]:
         """Load every canonical program in deterministic ID order."""
-        rows = (await self._session.scalars(select(ProgramRow).order_by(ProgramRow.id))).all()
-        return tuple([await self._load_program(row) for row in rows])
+        rows = tuple(
+            (await self._session.scalars(select(ProgramRow).order_by(ProgramRow.id))).all()
+        )
+        return await self._load_programs(rows)
 
-    async def _load_program(self, row: ProgramRow) -> ProgramRules:
+    async def get_program_rules(self, program_id: ProgramId) -> ProgramRules | None:
+        """Load one requested canonical program without scanning unrelated programs."""
+        row = await self._session.get(ProgramRow, int(program_id))
+        if row is None:
+            return None
+        return (await self._load_programs((row,)))[0]
+
+    async def _load_programs(self, rows: tuple[ProgramRow, ...]) -> tuple[ProgramRules, ...]:
+        if not rows:
+            return ()
+        program_ids = tuple(row.id for row in rows)
+        rule_rows = tuple(
+            (
+                await self._session.scalars(
+                    select(EligibilityRuleRow)
+                    .outerjoin(
+                        DocumentRow,
+                        DocumentRow.id == EligibilityRuleRow.source_document_id,
+                    )
+                    .outerjoin(
+                        AttachmentRow,
+                        AttachmentRow.id == DocumentRow.attachment_id,
+                    )
+                    .outerjoin(
+                        CurrentNoticeVersionRow,
+                        CurrentNoticeVersionRow.version_id == AttachmentRow.notice_version_id,
+                    )
+                    .where(EligibilityRuleRow.program_id.in_(program_ids))
+                    .where(
+                        or_(
+                            EligibilityRuleRow.source_document_id.is_(None),
+                            CurrentNoticeVersionRow.id.is_not(None),
+                        )
+                    )
+                    .order_by(EligibilityRuleRow.id)
+                )
+            ).all()
+        )
+        rules_by_program: dict[int, list[EligibilityRuleRow]] = {}
+        for rule_row in rule_rows:
+            rules_by_program.setdefault(rule_row.program_id, []).append(rule_row)
+        evidence_by_rule = await self._load_evidence_for_rules(
+            tuple(rule_row.id for rule_row in rule_rows)
+        )
+        return tuple(
+            self._build_program(
+                row,
+                tuple(rules_by_program.get(row.id, ())),
+                evidence_by_rule,
+            )
+            for row in rows
+        )
+
+    def _build_program(
+        self,
+        row: ProgramRow,
+        rule_rows: tuple[EligibilityRuleRow, ...],
+        evidence_by_rule: dict[int, tuple[Evidence, ...]],
+    ) -> ProgramRules:
         program = Program(
             id=ProgramId(row.id),
             canonical_key=row.canonical_key,
@@ -65,38 +125,13 @@ class ProgramQueryRepository:
             reference_date=row.reference_date,
             reference_date_source=row.reference_date_source,
         )
-        rule_rows = (
-            await self._session.scalars(
-                select(EligibilityRuleRow)
-                .outerjoin(
-                    DocumentRow,
-                    DocumentRow.id == EligibilityRuleRow.source_document_id,
-                )
-                .outerjoin(
-                    AttachmentRow,
-                    AttachmentRow.id == DocumentRow.attachment_id,
-                )
-                .outerjoin(
-                    CurrentNoticeVersionRow,
-                    CurrentNoticeVersionRow.version_id == AttachmentRow.notice_version_id,
-                )
-                .where(EligibilityRuleRow.program_id == row.id)
-                .where(
-                    or_(
-                        EligibilityRuleRow.source_document_id.is_(None),
-                        CurrentNoticeVersionRow.id.is_not(None),
-                    )
-                )
-                .order_by(EligibilityRuleRow.id)
-            )
-        ).all()
         if not rule_rows:
             return ProgramRules(program, (), (), ("missing_rules",))
         rules: list[EligibilityRule] = []
         evidence_items: list[Evidence] = []
         errors: list[str] = []
         for rule_row in rule_rows:
-            loaded = await self._load_rule(rule_row)
+            loaded = self._load_rule(rule_row, evidence_by_rule.get(rule_row.id, ()))
             match loaded:
                 case str() as error:
                     errors.append(error)
@@ -112,7 +147,11 @@ class ProgramQueryRepository:
             tuple(dict.fromkeys(errors)),
         )
 
-    async def _load_rule(self, row: EligibilityRuleRow) -> EligibilityRule | str:
+    def _load_rule(
+        self,
+        row: EligibilityRuleRow,
+        evidence: tuple[Evidence, ...],
+    ) -> EligibilityRule | str:
         try:
             kind = RuleKind(row.kind)
         except ValueError:
@@ -125,7 +164,6 @@ class ProgramQueryRepository:
             expected_value = _EXPECTED_VALUE.validate_json(row.expected_json)
         except ValidationError:
             return "malformed_expected_value"
-        evidence = await self._load_rule_evidence(row.id)
         if not evidence:
             return "missing_evidence"
         return EligibilityRule(
@@ -140,41 +178,41 @@ class ProgramQueryRepository:
             evidence=evidence,
         )
 
-    async def _load_rule_evidence(self, rule_id: int) -> tuple[Evidence, ...]:
-        evidence_ids = (
-            await self._session.scalars(
-                select(EvidenceRow.id)
-                .join(rule_evidence, rule_evidence.c.evidence_id == EvidenceRow.id)
-                .where(rule_evidence.c.rule_id == rule_id)
-                .order_by(EvidenceRow.id)
+    async def _load_evidence_for_rules(
+        self,
+        rule_ids: tuple[int, ...],
+    ) -> dict[int, tuple[Evidence, ...]]:
+        if not rule_ids:
+            return {}
+        result = await self._session.execute(
+            select(
+                EligibilityRuleRow,
+                EvidenceRow,
+                DocumentRow,
+                DocumentBlockRow,
             )
-        ).all()
-        loaded: list[Evidence] = []
-        for evidence_id in evidence_ids:
-            evidence = await self._load_evidence(evidence_id)
-            if evidence is None:
-                return ()
-            loaded.append(evidence)
-        return tuple(loaded)
-
-    async def _load_evidence(self, evidence_id: int) -> Evidence | None:
-        row = await self._session.get(EvidenceRow, evidence_id)
-        if row is None:
-            return None
-        document = await self._session.get(DocumentRow, row.document_id)
-        block = await self._session.get(DocumentBlockRow, row.block_id)
-        if document is None or block is None:
-            return None
-        return Evidence(
-            id=EvidenceId(row.id),
-            document_id=DocumentId(str(document.id)),
-            block_id=DocumentBlockId(block.source_block_id or str(block.id)),
-            source_url=row.source_url,
-            page=row.page,
-            section_path=row.section_path,
-            quote=row.quote,
-            content_hash=row.content_hash,
+            .join(rule_evidence, rule_evidence.c.rule_id == EligibilityRuleRow.id)
+            .join(EvidenceRow, rule_evidence.c.evidence_id == EvidenceRow.id)
+            .join(DocumentRow, DocumentRow.id == EvidenceRow.document_id)
+            .join(DocumentBlockRow, DocumentBlockRow.id == EvidenceRow.block_id)
+            .where(rule_evidence.c.rule_id.in_(rule_ids))
+            .order_by(rule_evidence.c.rule_id, EvidenceRow.id)
         )
+        loaded: dict[int, list[Evidence]] = {}
+        for rule, row, document, block in result.tuples():
+            loaded.setdefault(rule.id, []).append(
+                Evidence(
+                    id=EvidenceId(row.id),
+                    document_id=DocumentId(str(document.id)),
+                    block_id=DocumentBlockId(block.source_block_id or str(block.id)),
+                    source_url=row.source_url,
+                    page=row.page,
+                    section_path=row.section_path,
+                    quote=row.quote,
+                    content_hash=row.content_hash,
+                )
+            )
+        return {rule_id: tuple(items) for rule_id, items in loaded.items()}
 
 
 def _unique_evidence(items: list[Evidence]) -> tuple[Evidence, ...]:

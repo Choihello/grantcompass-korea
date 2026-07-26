@@ -6,8 +6,8 @@ from typing import assert_never, final
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from grantcompass.cli.errors import CliError
-from grantcompass.cli.profiles import ProfileRepository
+from grantcompass.cli.errors import CliError, CliErrorCode
+from grantcompass.cli.profiles import profile_from_row
 from grantcompass.domain.cases import ManagedCompanyId
 from grantcompass.domain.eligibility import ApplicantProfileId
 from grantcompass.domain.enums import FinalStatus
@@ -24,7 +24,11 @@ from grantcompass.matching.reverse_input_errors import (
     profile_input_error,
     program_input_error,
 )
-from grantcompass.matching.reverse_inputs import MatchContext, load_reverse_inputs
+from grantcompass.matching.reverse_inputs import (
+    MatchContext,
+    ReverseCompanyInput,
+    load_reverse_inputs,
+)
 from grantcompass.rules.deterministic import (
     AssessmentInputError,
     DeterministicAssessmentEngine,
@@ -58,21 +62,26 @@ class ReverseMatchingService:
         async with self._session.begin():
             inputs = await load_reverse_inputs(self._session, program_id)
             matches = [
-                await self._match_company(row, inputs.context, assessed_at)
-                for row in inputs.companies
+                await self._match_company(candidate, inputs.context, assessed_at)
+                for candidate in inputs.companies
             ]
         return tuple(sorted(matches, key=_match_key))
 
     async def _match_company(
         self,
-        row: ManagedCompanyRow,
+        candidate_input: ReverseCompanyInput,
         context: MatchContext,
         assessed_at: datetime,
     ) -> CompanyMatch:
+        row = candidate_input.company
         profile_id = ApplicantProfileId(row.profile_id)
         candidate = _Candidate(row, profile_id, None)
+        if candidate_input.profile is None:
+            return _unmatched(
+                candidate, context, profile_input_error(CliErrorCode.PROFILE_NOT_FOUND)
+            )
         try:
-            profile = await ProfileRepository(self._session).resolve(str(row.profile_id))
+            profile = profile_from_row(candidate_input.profile)
         except CliError as error:
             return _unmatched(candidate, context, profile_input_error(error.code))
         candidate = _Candidate(row, profile_id, profile.display_name)

@@ -86,7 +86,10 @@ async def test_health_reports_persisted_hidden_candidates_in_stable_order(
         await seed_institution(session)
     await engine.dispose()
     await _seed_hidden_failures(database_url)
-    app = create_app(Settings(database_url=database_url), FixedClock())
+    app = create_app(
+        Settings(database_url=database_url, allowed_hosts=("hidden-failures.test",)),
+        FixedClock(),
+    )
 
     # When: the operator reads the machine health contract twice.
     async with httpx2.AsyncClient(

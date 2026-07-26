@@ -1,8 +1,17 @@
 # GrantCompass Korea 0.1 manual QA
 
-Date: 2026-07-22 (Asia/Seoul)
+Date: 2026-07-26 (Asia/Seoul)
 
-## Authoritative final build under test
+## Release-evidence authority
+
+The Task 14 record below is historical evidence for commit
+`15879c453d7ee855c05ca3e70b99c608c1ee037d`; it is not the current authoritative release
+evidence. The latest executable pre-release baseline entering Task 15 is
+`2a0ec72764da45f15a31d9f57fdf2de5bb930728`. After the independent release gates pass, the
+controller-created annotated release tags and their exact-SHA evidence ledger are authoritative.
+This document does not claim that those tags exist.
+
+## Historical Task 14 final build under test
 
 - Functional commit C: `15879c453d7ee855c05ca3e70b99c608c1ee037d`
 - Commit C tree: `6c500aae8ced3903e594605a3952262a2dc9da49`
@@ -65,8 +74,8 @@ The WeasyPrint preflight now has a finite five-second production timeout. A bloc
 hard timeout failure; only completed stderr is eligible for recognized native-loader
 classification. Tests cover the timeout and an immediate recognized-loader result.
 
-All artifact hashes and gate counts in the historical record below are superseded by the single
-authoritative commit-C values above. No tag was created.
+Within the historical Task 14 record, the artifact hashes and gate counts below were superseded by
+the commit-C values above. No tag was created.
 
 ## Historical build-A record (superseded)
 

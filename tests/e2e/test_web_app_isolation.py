@@ -43,8 +43,8 @@ async def _database(path: Path, title: str) -> str:
 async def test_two_fastapi_instances_keep_routes_bound_to_their_own_runtime(tmp_path: Path) -> None:
     first_url = await _database(tmp_path / "first.db", "FIRST APP PROGRAM")
     second_url = await _database(tmp_path / "second.db", "SECOND APP PROGRAM")
-    first_app = create_app(Settings(database_url=first_url))
-    second_app = create_app(Settings(database_url=second_url))
+    first_app = create_app(Settings(database_url=first_url, allowed_hosts=("first.test",)))
+    second_app = create_app(Settings(database_url=second_url, allowed_hosts=("second.test",)))
     try:
         async with (
             httpx2.AsyncClient(

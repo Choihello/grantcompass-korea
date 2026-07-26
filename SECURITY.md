@@ -47,6 +47,13 @@ must add an authenticated reverse proxy, TLS, host firewall rules, least-privile
 tested SQLite/report/upload backup and recovery. Consultation reports and audit logs may reveal
 private business facts even when profiles contain no direct personal fields.
 
+The application defaults to loopback-only host and origin allowlists, rejects mutation origins
+outside the configured exact-origin set, and requires a signed per-browser-session CSRF token on
+every POST. Non-loopback deployments must explicitly configure exact public hosts and origins,
+share a random `GRANTCOMPASS_CSRF_SIGNING_SECRET` of at least 32 characters across workers, preserve
+`Host` and `Origin` through the proxy, and restrict trusted proxy-header senders to the proxy
+address. Wildcard hosts or origins defeat this boundary and are unsupported.
+
 `/health/failures` is an operator diagnostic endpoint. Do not expose it publicly; monitor that its
 `hidden_failures` list remains empty and investigate every visible stable error ID.
 

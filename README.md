@@ -37,6 +37,8 @@ GRANTCOMPASS_DATABASE_URL=sqlite+aiosqlite:///./grantcompass.db
 GRANTCOMPASS_KSTARTUP_SERVICE_KEY=
 GRANTCOMPASS_BIZINFO_SERVICE_KEY=
 GRANTCOMPASS_TIMEZONE=Asia/Seoul
+GRANTCOMPASS_ALLOWED_HOSTS=["localhost","127.0.0.1"]
+GRANTCOMPASS_ALLOWED_ORIGINS=["http://localhost:8000","http://127.0.0.1:8000"]
 ```
 
 Request keys through the official pages:
@@ -116,6 +118,15 @@ reverse matching, attributed condition overrides, consultation-stage changes, im
 history, institution-owned PDF/HWPX notice upload, and consultation PDF output. Persisted failure
 states are visible at `/programs/failure-scenario`; `/health/failures` returns the same stable IDs
 and a `hidden_failures` audit list.
+
+The default host and origin allowlists accept only the loopback URLs shown above. Every mutation
+also requires the signed browser-session token rendered into its form. If an authenticated TLS
+reverse proxy exposes a non-loopback name, set `GRANTCOMPASS_ALLOWED_HOSTS` to a JSON array of
+exact public hostnames and `GRANTCOMPASS_ALLOWED_ORIGINS` to a JSON array of exact public origins
+(scheme, hostname, and port when non-default). Set `GRANTCOMPASS_CSRF_SIGNING_SECRET` to the same
+random value of at least 32 characters on every application worker, keep it outside Git, preserve
+the original `Host` and `Origin` headers, and configure Uvicorn to trust proxy headers only from
+the proxy address. Never use `*` in either allowlist.
 
 The 0.1 web app has no built-in authentication or role-based access control. Do not expose it to an
 untrusted network. Restrict database, report, and uploaded-document access at the host or reverse

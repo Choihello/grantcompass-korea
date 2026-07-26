@@ -134,7 +134,10 @@ async def failure_client(tmp_path: Path) -> AsyncIterator[FailureHarness]:
         await connection.run_sync(Base.metadata.create_all)
     await engine.dispose()
     await _seed_failures(database_url)
-    app = create_app(Settings(database_url=database_url), FixedClock())
+    app = create_app(
+        Settings(database_url=database_url, allowed_hosts=("failures.test",)),
+        FixedClock(),
+    )
     async with httpx2.AsyncClient(
         transport=httpx2.ASGITransport(app=app),
         base_url="http://failures.test",

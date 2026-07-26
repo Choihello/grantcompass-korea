@@ -58,33 +58,64 @@ async def latest_matches(session: AsyncSession, program_id: int) -> tuple[MatchE
     latest_by_profile: dict[int, AssessmentRow] = {}
     for assessment in candidates:
         _ = latest_by_profile.setdefault(assessment.profile_id, assessment)
+    assessments = tuple(latest_by_profile.values())
+    if not assessments:
+        return ()
+    profile_ids = tuple(assessment.profile_id for assessment in assessments)
+    profiles = tuple(
+        (
+            await session.scalars(
+                select(ApplicantProfileRow).where(ApplicantProfileRow.id.in_(profile_ids))
+            )
+        ).all()
+    )
+    profiles_by_id = {profile.id: profile for profile in profiles}
+    assessment_ids = tuple(assessment.id for assessment in assessments)
+    condition_rows = await session.execute(
+        select(RuleAssessmentRow, EligibilityRuleRow)
+        .join(EligibilityRuleRow, EligibilityRuleRow.id == RuleAssessmentRow.rule_id)
+        .where(RuleAssessmentRow.assessment_id.in_(assessment_ids))
+        .order_by(RuleAssessmentRow.assessment_id, RuleAssessmentRow.id)
+    )
+    conditions_by_assessment: dict[int, list[tuple[RuleAssessmentRow, EligibilityRuleRow]]] = {}
+    for row, rule in condition_rows.tuples():
+        conditions_by_assessment.setdefault(row.assessment_id, []).append((row, rule))
+    audit_rows = tuple(
+        (
+            await session.scalars(
+                select(AuditEventRow)
+                .where(
+                    AuditEventRow.entity_type == "assessment",
+                    AuditEventRow.entity_id.in_(tuple(str(value) for value in assessment_ids)),
+                    AuditEventRow.action == "review",
+                )
+                .order_by(AuditEventRow.id.desc())
+            )
+        ).all()
+    )
+    latest_audit_by_assessment: dict[int, AuditEventRow] = {}
+    for audit in audit_rows:
+        _ = latest_audit_by_assessment.setdefault(int(audit.entity_id), audit)
     return tuple(
-        [await _match_entry(session, assessment) for assessment in latest_by_profile.values()]
+        _match_entry(
+            assessment,
+            profiles_by_id.get(assessment.profile_id),
+            tuple(conditions_by_assessment.get(assessment.id, ())),
+            latest_audit_by_assessment.get(assessment.id),
+        )
+        for assessment in assessments
     )
 
 
-async def _match_entry(session: AsyncSession, assessment: AssessmentRow) -> MatchEntry:
-    profile = await session.get(ApplicantProfileRow, assessment.profile_id)
+def _match_entry(
+    assessment: AssessmentRow,
+    profile: ApplicantProfileRow | None,
+    rows: tuple[tuple[RuleAssessmentRow, EligibilityRuleRow], ...],
+    audit: AuditEventRow | None,
+) -> MatchEntry:
     if profile is None:
         message = "assessment_profile_not_found"
         raise LookupError(message)
-    rows = (
-        await session.scalars(
-            select(RuleAssessmentRow)
-            .where(RuleAssessmentRow.assessment_id == assessment.id)
-            .order_by(RuleAssessmentRow.id)
-        )
-    ).all()
-    audit = await session.scalar(
-        select(AuditEventRow)
-        .where(
-            AuditEventRow.entity_type == "assessment",
-            AuditEventRow.entity_id == str(assessment.id),
-            AuditEventRow.action == "review",
-        )
-        .order_by(AuditEventRow.id.desc())
-        .limit(1)
-    )
     state = (
         parse_assessment_audit_state(audit.after_json)
         if audit is not None and audit.after_json is not None
@@ -94,11 +125,7 @@ async def _match_entry(session: AsyncSession, assessment: AssessmentRow) -> Matc
         {item.rule_assessment_id: item.status for item in state.overrides} if state else {}
     )
     conditions: list[MatchConditionEntry] = []
-    for row in rows:
-        rule = await session.get(EligibilityRuleRow, row.rule_id)
-        if rule is None:
-            message = "assessment_rule_not_found"
-            raise LookupError(message)
+    for row, rule in rows:
         override = override_by_id.get(row.id)
         conditions.append(
             MatchConditionEntry(

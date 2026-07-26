@@ -74,24 +74,49 @@ async def list_programs(
 ) -> tuple[ProgramListEntry, ...]:
     """Return current programs with visible freshness and change badges."""
     programs = (await session.scalars(select(ProgramRow).order_by(ProgramRow.id.desc()))).all()
+    if not programs:
+        return ()
+    program_ids = tuple(program.id for program in programs)
+    notice_rows = (
+        await session.scalars(
+            select(NoticeVersionRow)
+            .join(
+                CurrentNoticeVersionRow,
+                CurrentNoticeVersionRow.version_id == NoticeVersionRow.id,
+            )
+            .where(NoticeVersionRow.program_id.in_(program_ids))
+            .order_by(
+                NoticeVersionRow.program_id,
+                NoticeVersionRow.source,
+                NoticeVersionRow.source_notice_id,
+            )
+        )
+    ).all()
+    notices_by_program: dict[int, list[NoticeVersionRow]] = {}
+    for notice in notice_rows:
+        notices_by_program.setdefault(notice.program_id, []).append(notice)
+    changed_program_ids = frozenset(
+        (
+            await session.scalars(
+                select(NoticeVersionRow.program_id)
+                .join(
+                    CurrentNoticeVersionRow,
+                    CurrentNoticeVersionRow.version_id == NoticeVersionRow.id,
+                )
+                .join(
+                    ChangeSetRow,
+                    ChangeSetRow.current_version_id == CurrentNoticeVersionRow.version_id,
+                )
+                .where(NoticeVersionRow.program_id.in_(program_ids))
+                .distinct()
+            )
+        ).all()
+    )
     entries: list[ProgramListEntry] = []
     freshness_by_source: dict[SourceName, FreshnessStatus] = {}
     current = now.astimezone(UTC)
     for program in programs:
-        notices = await _current_notices(session, program.id)
-        changed = await session.scalar(
-            select(ChangeSetRow.id)
-            .join(
-                CurrentNoticeVersionRow,
-                CurrentNoticeVersionRow.version_id == ChangeSetRow.current_version_id,
-            )
-            .join(
-                NoticeVersionRow,
-                NoticeVersionRow.id == CurrentNoticeVersionRow.version_id,
-            )
-            .where(NoticeVersionRow.program_id == program.id)
-            .limit(1)
-        )
+        notices = tuple(notices_by_program.get(program.id, ()))
         source_freshness: list[FreshnessStatus] = []
         for notice in notices:
             try:
@@ -107,7 +132,7 @@ async def list_programs(
         badges: list[str] = []
         if current - _as_utc(program.created_at) <= timedelta(days=7):
             badges.append("신규")
-        if changed is not None:
+        if program.id in changed_program_ids:
             badges.append("변경")
         if program.application_end is not None and program.application_end < current.date():
             badges.append("종료")
@@ -182,25 +207,35 @@ async def get_program_detail(
             .order_by(EligibilityRuleRow.id)
         )
     ).all()
-    evidence_entries: list[EvidenceEntry] = []
-    for rule in rules:
-        evidence = await session.scalar(
-            select(EvidenceRow)
-            .join(rule_evidence, rule_evidence.c.evidence_id == EvidenceRow.id)
-            .where(rule_evidence.c.rule_id == rule.id)
-            .order_by(EvidenceRow.id)
-            .limit(1)
+    rule_ids = tuple(rule.id for rule in rules)
+    first_evidence_by_rule: dict[int, EvidenceRow] = {}
+    if rule_ids:
+        evidence_rows = await session.execute(
+            select(EligibilityRuleRow, EvidenceRow)
+            .join(rule_evidence, rule_evidence.c.rule_id == EligibilityRuleRow.id)
+            .join(EvidenceRow, rule_evidence.c.evidence_id == EvidenceRow.id)
+            .where(rule_evidence.c.rule_id.in_(rule_ids))
+            .order_by(rule_evidence.c.rule_id, EvidenceRow.id)
         )
-        evidence_entries.append(
+        for rule, evidence in evidence_rows.tuples():
+            _ = first_evidence_by_rule.setdefault(rule.id, evidence)
+    evidence_entries = tuple(
+        (
             EvidenceEntry(
                 rule.kind,
                 rule.review_status,
                 rule.rule_version,
-                evidence.source_url if evidence else None,
-                evidence.page if evidence else None,
-                evidence.section_path if evidence else None,
+                first_evidence_by_rule[rule.id].source_url
+                if rule.id in first_evidence_by_rule
+                else None,
+                first_evidence_by_rule[rule.id].page if rule.id in first_evidence_by_rule else None,
+                first_evidence_by_rule[rule.id].section_path
+                if rule.id in first_evidence_by_rule
+                else None,
             )
         )
+        for rule in rules
+    )
     target_timezone = ZoneInfo(timezone)
     return ProgramDetail(
         id=program.id,
@@ -217,7 +252,7 @@ async def get_program_detail(
             )
             for item in notices
         ),
-        evidence=tuple(evidence_entries),
+        evidence=evidence_entries,
         matches=await latest_matches(session, program.id),
     )
 
