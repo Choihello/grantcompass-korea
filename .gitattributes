@@ -1,1 +1,2 @@
-tests/fixtures/benchmark/documents.jsonl text eol=lf
+tests/fixtures/**/*.json text eol=lf
+tests/fixtures/**/*.jsonl text eol=lf
