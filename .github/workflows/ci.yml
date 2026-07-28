@@ -53,6 +53,9 @@ jobs:
       - name: Type-check
         run: uv run basedpyright
 
+      - name: Create test scratch directory
+        run: uv run python -c "from pathlib import Path; Path('.tools').mkdir(exist_ok=True)"
+
       - name: Run tests
         run: uv run pytest
 
