@@ -47,7 +47,7 @@ async def test_configured_cli_is_honored_before_native_renderer(
 
     # Then: fixed argv and stdin/stdout honor the supplied CLI without native probing.
     assert result.startswith(b"%PDF")
-    assert observed == [((str(executable), "-", "-"), b"<p>safe</p>")]
+    assert observed == [((str(executable), "--encoding", "utf-8", "-", "-"), b"<p>safe</p>")]
 
 
 async def test_missing_native_and_cli_returns_stable_runtime_error(

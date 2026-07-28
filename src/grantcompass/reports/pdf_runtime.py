@@ -86,9 +86,17 @@ class WeasyPrintRenderer:
         if executable is not None:
             if not await AsyncPath(executable).is_file():
                 raise PdfRenderError(_EXECUTABLE_NOT_FOUND)
-            command = (executable, "-", "-")
+            command = (executable, "--encoding", "utf-8", "-", "-")
         elif self._module_available():
-            command = (sys.executable, "-m", "weasyprint", "-", "-")
+            command = (
+                sys.executable,
+                "-m",
+                "weasyprint",
+                "--encoding",
+                "utf-8",
+                "-",
+                "-",
+            )
         else:
             raise PdfRenderError(_RUNTIME_UNAVAILABLE) from None
         return await self._render_process(markup, command)

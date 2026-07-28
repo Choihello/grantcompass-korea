@@ -50,7 +50,12 @@ async def test_portable_module_cli_uses_the_fixed_process_boundary(
 
     # Then: Python's verified module CLI, never an in-process renderer, is invoked.
     assert result.startswith(b"%PDF")
-    assert observed == [((sys.executable, "-m", "weasyprint", "-", "-"), b"<p>safe</p>")]
+    assert observed == [
+        (
+            (sys.executable, "-m", "weasyprint", "--encoding", "utf-8", "-", "-"),
+            b"<p>safe</p>",
+        )
+    ]
 
 
 async def test_zero_exit_non_pdf_output_is_rejected(
