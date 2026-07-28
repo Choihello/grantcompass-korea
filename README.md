@@ -136,7 +136,8 @@ proxy.
 
 Consultation PDFs require a working WeasyPrint native runtime, not only the Python package. Follow
 the official [WeasyPrint installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html)
-for the operating system. A fixed absolute executable can be selected with
+for the operating system. Korean output also requires an installed Hangul-capable font, such as
+Noto Sans CJK (`fonts-noto-cjk` on Debian or Ubuntu). A fixed absolute executable can be selected with
 `GRANTCOMPASS_WEASYPRINT_EXECUTABLE`. Render timeout, process failure, and invalid PDF output are
 hard failures. On the Task 14 Windows QA host, native loading was unavailable because
 `libgobject-2.0-0` was missing; PDF runtime QA was therefore not claimed.

@@ -38,6 +38,10 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Install Korean PDF font
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes fonts-noto-cjk
+
       - name: Install locked dependencies
         run: uv sync --locked --all-groups
 
